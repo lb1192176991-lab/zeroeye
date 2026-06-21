@@ -340,6 +340,24 @@ def check_prerequisites() -> list[str]:
 
     return missing
 
+
+def planned_build_commands(module: Module, release: bool = False) -> list[list[str]]:
+    if module.name == "engine":
+        build_type = "Release" if release else "Debug"
+        commands = [
+            ["cmake", "-S", ".", "-B", "build", f"-DCMAKE_BUILD_TYPE={build_type}"],
+            ["cmake", "--build", "build"],
+        ]
+        if release:
+            commands[-1].extend(["--config", "Release"])
+        return commands
+
+    command = list(module.build_cmd)
+    if release and module.name == "backend":
+        command.append("--release")
+    return [command]
+
+
 def build_module(
     module: Module,
     release: bool = False,
@@ -824,6 +842,7 @@ Examples:
   python3 build.py                    Build all modules
   python3 build.py -m backend         Build only backend
   python3 build.py -m frontend,market Build frontend and market
+  python3 build.py -m backend --dry-run  Show what would run
   python3 build.py --clean            Clean all artifacts
   python3 build.py --release          Release build (Rust only)
   python3 build.py --verbose          Verbose output
@@ -844,6 +863,10 @@ Diagnostic bundle:
     parser.add_argument(
         "--release", action="store_true",
         help="Build in release mode (Rust backend)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the selected plan without cleaning, checking encryptly, or building",
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true",
@@ -892,6 +915,30 @@ Diagnostic bundle:
 
     if not selected:
         print(f"  No modules selected.")
+        return 0
+
+    if args.dry_run:
+        action = "clean" if args.clean else "build"
+        commit_id = current_commit_id()
+        logd_path = DIAGNOSTIC_DIR / f"build-{commit_id}.logd"
+        metadata_path = DIAGNOSTIC_DIR / f"build-{commit_id}.json"
+        print(f"\n  {color('Dry run:', Colors.BOLD)} {action} plan")
+        print(f"  Commit id: {commit_id}")
+        print(f"  Release mode: {args.release}")
+        print(f"  Selected modules: {', '.join(m.name for m in selected)}")
+        for module in selected:
+            commands = [module.clean_cmd] if args.clean else planned_build_commands(module, args.release)
+            print(f"\n  {color(module.name + ':', Colors.CYAN)}")
+            print(f"    dir: {module.dir.relative_to(ROOT)}")
+            for command in commands:
+                print(f"    command: {' '.join(command)}")
+        if args.clean:
+            print("\n  Diagnostic artifacts would be removed if present.")
+        else:
+            print(f"\n  Diagnostic metadata: {metadata_path.relative_to(ROOT)}")
+            print(f"  Diagnostic log: {logd_path.relative_to(ROOT)}")
+            print("  encryptly preflight would run before real builds.")
+        print(f"\n  {color('Dry run complete. No files changed.', Colors.GREEN)}")
         return 0
 
     if args.clean:
