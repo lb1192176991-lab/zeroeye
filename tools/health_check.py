@@ -24,20 +24,25 @@ Each check returns a status of OK, WARNING, or CRITICAL, along with
 a detail message and optional diagnostic data.
 
 Usage:
-    python3 health_check.py                  # Check all services
-    python3 health_check.py --service backend # Check specific service
-    python3 health_check.py --json            # JSON output
-    python3 health_check.py --watch           # Continuous monitoring
+    python3 health_check.py                       # Check all services
+    python3 health_check.py --service backend     # Check specific service
+    python3 health_check.py --json                # JSON output
+    python3 health_check.py --watch               # Continuous monitoring
+    python3 health_check.py --timeout 10          # Per-request timeout (seconds)
+    python3 health_check.py --probe-rate 5        # Max probes per second
 """
 
 import argparse
+import http.client
 import json
 import os
 import socket
 import ssl
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -64,33 +69,243 @@ DISK_THRESHOLD_CRITICAL = 90
 MEMORY_THRESHOLD_WARNING = 80
 MEMORY_THRESHOLD_CRITICAL = 90
 
+# Retry defaults
+DEFAULT_RETRIES = 3
+DEFAULT_BACKOFF_BASE = 1.0  # seconds
+
+# Circuit breaker states
+CIRCUIT_CLOSED = "CLOSED"
+CIRCUIT_OPEN = "OPEN"
+CIRCUIT_HALF_OPEN = "HALF_OPEN"
+
+
+# ---------------------------------------------------------------------------
+# TOKEN BUCKET RATE LIMITER
+# ---------------------------------------------------------------------------
+
+class TokenBucket:
+    """A thread-safe token bucket rate limiter.
+
+    Allows up to `rate` tokens (probes) per second, with burst support
+    up to `burst` tokens. Uses a sliding-window-like replenishment
+    strategy for smooth rate limiting.
+    """
+
+    def __init__(self, rate: float, burst: Optional[int] = None):
+        if rate <= 0:
+            raise ValueError("Rate must be positive")
+        self._rate = rate
+        self._burst = burst if burst is not None else max(1, int(rate))
+        self._tokens = float(self._burst)
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+        self._throttled_count = 0
+        self._total_requests = 0
+
+    def _refill(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._last_refill
+        self._tokens = min(self._burst, self._tokens + elapsed * self._rate)
+        self._last_refill = now
+
+    def acquire(self, blocking: bool = True) -> bool:
+        """Try to acquire a token. Returns True if allowed, False if throttled.
+
+        When blocking=True, waits until a token is available.
+        When blocking=False, returns immediately.
+        """
+        with self._lock:
+            self._refill()
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                self._total_requests += 1
+                return True
+            self._throttled_count += 1
+            self._total_requests += 1
+
+        if blocking:
+            # Wait for next token
+            sleep_time = 1.0 / self._rate
+            time.sleep(sleep_time)
+            return self.acquire(blocking=False)
+
+        return False
+
+    @property
+    def throttled(self) -> int:
+        """Number of requests that have been throttled."""
+        with self._lock:
+            return self._throttled_count
+
+    @property
+    def total_requests(self) -> int:
+        """Total requests processed (including throttled)."""
+        with self._lock:
+            return self._total_requests
+
+    @property
+    def current_rate(self) -> float:
+        """Current effective rate (requests per second over recent window)."""
+        with self._lock:
+            self._refill()
+            return self._rate
+
+    def stats(self) -> Dict[str, Any]:
+        """Return rate limiter statistics."""
+        with self._lock:
+            return {
+                "rate": self._rate,
+                "burst": self._burst,
+                "throttled": self._throttled_count,
+                "total_requests": self._total_requests,
+                "current_tokens": round(self._tokens, 2),
+            }
+
+
+# ---------------------------------------------------------------------------
+# CIRCUIT BREAKER
+# ---------------------------------------------------------------------------
+
+class CircuitBreaker:
+    """Simple circuit breaker with HALF_OPEN state support.
+
+    Tracks consecutive failures. When failures exceed the threshold,
+    the circuit opens. After a recovery timeout, it transitions to
+    HALF_OPEN, allowing limited probes.
+    """
+
+    def __init__(self, failure_threshold: int = 3, recovery_timeout: float = 30.0):
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout
+        self._state = CIRCUIT_CLOSED
+        self._failure_count = 0
+        self._last_failure_time = 0.0
+        self._lock = threading.Lock()
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            self._maybe_transition()
+            return self._state
+
+    def _maybe_transition(self) -> None:
+        """Check if we should transition from OPEN to HALF_OPEN."""
+        if self._state == CIRCUIT_OPEN:
+            if time.monotonic() - self._last_failure_time >= self._recovery_timeout:
+                self._state = CIRCUIT_HALF_OPEN
+
+    def record_success(self) -> None:
+        with self._lock:
+            if self._state == CIRCUIT_HALF_OPEN:
+                self._state = CIRCUIT_CLOSED
+            self._failure_count = 0
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.monotonic()
+            if self._failure_count >= self._failure_threshold:
+                self._state = CIRCUIT_OPEN
+
+    def allow_request(self) -> bool:
+        with self._lock:
+            self._maybe_transition()
+            if self._state == CIRCUIT_OPEN:
+                return False
+            return True
+
+    def stats(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "state": self._state,
+                "failure_count": self._failure_count,
+                "failure_threshold": self._failure_threshold,
+                "recovery_timeout": self._recovery_timeout,
+            }
+
+
 # ---------------------------------------------------------------------------
 # CHECK FUNCTIONS
 # ---------------------------------------------------------------------------
 
-def check_http_service(host: str, port: int, path: str, timeout: int) -> Tuple[str, str, int]:
-    import http.client
-    try:
-        conn = http.client.HTTPConnection(host, port, timeout=timeout)
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        status = resp.status
-        body = resp.read().decode("utf-8", errors="replace")[:200]
-        conn.close()
+def check_http_service(
+    host: str,
+    port: int,
+    path: str,
+    timeout: int,
+    retries: int = DEFAULT_RETRIES,
+    backoff_base: float = DEFAULT_BACKOFF_BASE,
+    rate_limiter: Optional[TokenBucket] = None,
+    circuit_breaker: Optional[CircuitBreaker] = None,
+) -> Tuple[str, str, int]:
+    """Check an HTTP service with configurable timeout, retries, and backoff.
 
-        if status == 200:
-            result = "OK"
-            detail = f"HTTP {status}"
-        elif status < 500:
-            result = "WARNING"
-            detail = f"HTTP {status}: {body[:100]}"
-        else:
-            result = "CRITICAL"
-            detail = f"HTTP {status}: {body[:100]}"
+    Args:
+        host: Service hostname.
+        port: Service port.
+        path: HTTP path.
+        timeout: Per-request timeout in seconds.
+        retries: Maximum number of retry attempts.
+        backoff_base: Base backoff delay in seconds (doubles each retry).
+        rate_limiter: Optional token bucket to throttle requests.
+        circuit_breaker: Optional circuit breaker to track failures.
 
-        return result, detail, status
-    except Exception as e:
-        return "CRITICAL", str(e), 0
+    Returns:
+        Tuple of (status, detail, code).
+    """
+    # Check circuit breaker first
+    if circuit_breaker is not None and not circuit_breaker.allow_request():
+        return "CRITICAL", "Circuit breaker OPEN - request blocked", 0
+
+    # Acquire rate limiter token
+    if rate_limiter is not None:
+        rate_limiter.acquire(blocking=False)
+
+    last_exception = None
+    last_status = 0
+    last_body = ""
+
+    for attempt in range(retries):
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            try:
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                status = resp.status
+                body = resp.read().decode("utf-8", errors="replace")[:200]
+            finally:
+                conn.close()
+
+            if status == 200:
+                if circuit_breaker is not None:
+                    circuit_breaker.record_success()
+                return "OK", f"HTTP {status}", status
+            elif status < 500:
+                # Client errors (4xx) don't retry
+                return "WARNING", f"HTTP {status}: {body[:100]}", status
+            else:
+                # Server errors (5xx) may retry
+                last_status = status
+                last_body = body
+                if attempt < retries - 1:
+                    delay = backoff_base * (2 ** attempt)
+                    time.sleep(delay)
+                    continue
+                return "CRITICAL", f"HTTP {status}: {body[:100]}", status
+
+        except Exception as e:
+            last_exception = e
+            if attempt < retries - 1:
+                delay = backoff_base * (2 ** attempt)
+                time.sleep(delay)
+
+    # All retries exhausted
+    if circuit_breaker is not None:
+        circuit_breaker.record_failure()
+
+    if last_exception:
+        return "CRITICAL", str(last_exception), 0
+    return "CRITICAL", f"HTTP {last_status}: {last_body[:100]}", 0
 
 
 def check_tcp_port(host: str, port: int, timeout: int) -> Tuple[str, str, float]:
@@ -200,7 +415,12 @@ def check_load_average() -> Tuple[str, str, float]:
 # HEALTH CHECK RUNNER
 # ---------------------------------------------------------------------------
 
-def run_health_checks(service: Optional[str] = None, json_output: bool = False) -> Dict[str, Any]:
+def run_health_checks(
+    service: Optional[str] = None,
+    json_output: bool = False,
+    global_timeout: Optional[int] = None,
+    probe_rate: Optional[float] = None,
+) -> Dict[str, Any]:
     results: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "hostname": socket.gethostname(),
@@ -212,19 +432,47 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
 
     all_ok = True
 
+    # Set up rate limiter and circuit breaker
+    rate_limiter = TokenBucket(rate=probe_rate) if probe_rate else None
+    circuit_breaker = CircuitBreaker()
+
     # Check services
     for name, config in SERVICES.items():
         if service and name != service:
             continue
+
+        effective_timeout = global_timeout or config["timeout"]
+
+        # In HALF_OPEN state, reduce probe rate to 50%
+        effective_rate = probe_rate
+        if rate_limiter and circuit_breaker.state == CIRCUIT_HALF_OPEN:
+            effective_rate = probe_rate * 0.5
+            # Create a temporary rate limiter with reduced rate for this probe
+            half_rate_limiter = TokenBucket(rate=effective_rate)
+        else:
+            half_rate_limiter = rate_limiter
+
         status, detail, code = check_http_service(
-            config["host"], config["port"], config["path"], config["timeout"]
+            config["host"], config["port"], config["path"],
+            timeout=effective_timeout,
+            rate_limiter=half_rate_limiter,
+            circuit_breaker=circuit_breaker,
         )
-        results["services"][name] = {
+        service_entry = {
             "status": status,
             "detail": detail,
             "code": code,
             "endpoint": f"http://{config['host']}:{config['port']}{config['path']}",
         }
+
+        # Add rate limiter info per service
+        if rate_limiter:
+            service_entry["rate_limiter"] = {
+                "effective_rate": effective_rate,
+                "circuit_state": circuit_breaker.state,
+            }
+
+        results["services"][name] = service_entry
         if status == "CRITICAL":
             all_ok = False
 
@@ -232,7 +480,8 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
     for name, config in INFRASTRUCTURE.items():
         if service and name != service:
             continue
-        status, detail, latency = check_tcp_port(config["host"], config["port"], config["timeout"])
+        effective_timeout = global_timeout or config["timeout"]
+        status, detail, latency = check_tcp_port(config["host"], config["port"], effective_timeout)
         results["infrastructure"][name] = {
             "status": status,
             "detail": detail,
@@ -271,6 +520,11 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
 
     results["overall_status"] = "OK" if all_ok else "DEGRADED"
 
+    # Add global rate limiter stats to results
+    if rate_limiter:
+        results["rate_limiter"] = rate_limiter.stats()
+        results["rate_limiter"]["circuit_state"] = circuit_breaker.state
+
     return results
 
 
@@ -281,6 +535,12 @@ def print_health_report(results: Dict[str, Any]):
     print(f"  Time: {results['timestamp']}")
     print(f"  Overall: {results['overall_status']}")
     print(f"{'='*60}")
+
+    # Print rate limiter stats if present
+    if "rate_limiter" in results:
+        rl = results["rate_limiter"]
+        print(f"\n  Rate Limiter:")
+        print(f"    Rate: {rl['rate']}/s | Throttled: {rl['throttled']} | Circuit: {rl['circuit_state']}")
 
     for category, items in [("Services", results["services"]),
                              ("Infrastructure", results["infrastructure"]),
@@ -307,6 +567,10 @@ def parse_args():
     parser.add_argument("--watch", "-w", action="store_true", help="Continuous monitoring")
     parser.add_argument("--interval", "-i", type=int, default=30, help="Check interval in seconds")
     parser.add_argument("--output", "-o", help="Output file path")
+    parser.add_argument("--timeout", "-t", type=int, default=None,
+                        help="Per-request timeout in seconds (overrides per-service defaults)")
+    parser.add_argument("--probe-rate", "-r", type=float, default=None,
+                        help="Max probes per second (e.g., --probe-rate 5)")
     return parser.parse_args()
 
 
@@ -317,7 +581,11 @@ def main():
         print(f"Continuous monitoring (interval: {args.interval}s). Press Ctrl+C to stop.")
         try:
             while True:
-                results = run_health_checks(args.service, args.json)
+                results = run_health_checks(
+                    args.service, args.json,
+                    global_timeout=args.timeout,
+                    probe_rate=args.probe_rate,
+                )
                 if args.json:
                     print(json.dumps(results, indent=2))
                 else:
@@ -326,7 +594,11 @@ def main():
         except KeyboardInterrupt:
             print("\nMonitoring stopped")
     else:
-        results = run_health_checks(args.service, args.json)
+        results = run_health_checks(
+            args.service, args.json,
+            global_timeout=args.timeout,
+            probe_rate=args.probe_rate,
+        )
         if args.json:
             output = json.dumps(results, indent=2)
             print(output)
