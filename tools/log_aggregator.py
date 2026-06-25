@@ -4,7 +4,7 @@ Legacy log aggregator and analysis tool for the Tent of Trials platform.
 
 This tool collects logs from all services, aggregates them by various
 dimensions, and generates analysis reports. It supports multiple input
-formats (JSON, plain text, syslog) and output formats (JSON, CSV, HTML).
+formats (JSON, plain text, syslog) and output formats (JSON, CSV, HTML, JSONL).
 
 WARNING: This tool is LEGACY. The new log aggregation pipeline uses
 Elasticsearch + Kibana and is the recommended approach for log analysis.
@@ -30,6 +30,7 @@ Usage:
     python3 log_aggregator.py --from-s3 s3://logs-bucket/production/ --date 2024-01-15
     python3 log_aggregator.py --analyze --window 1h --group-by service
     python3 log_aggregator.py --stream --filter 'severity:error'
+    python3 log_aggregator.py --input app.log --format jsonl --output output.jsonl
 """
 
 import argparse
@@ -349,6 +350,23 @@ class LogAggregator:
                 writer.writerow(entry)
         logger.info(f"Exported {min(len(self.entries), max_entries)} entries to {output_path}")
 
+    def export_jsonl(self, output_path: str, max_entries: int = 100000):
+        """Export parsed log entries as JSON Lines (one JSON object per line)."""
+        count = 0
+        with open(output_path, 'w') as f:
+            for entry in self.entries[:max_entries]:
+                # Serialize each entry as a single JSON line, excluding bulky fields
+                line_entry = {
+                    'timestamp': entry.get('timestamp'),
+                    'level': entry.get('level', 'unknown'),
+                    'service': entry.get('service', 'unknown'),
+                    'message': entry.get('message', ''),
+                    'format': entry.get('format', 'unknown'),
+                }
+                f.write(json.dumps(line_entry, default=str) + '\n')
+                count += 1
+        logger.info(f"Exported {count} entries as JSONL to {output_path}")
+
     def export_json(self, output_path: str):
         with open(output_path, 'w') as f:
             json.dump({
@@ -409,7 +427,7 @@ def parse_args():
     parser.add_argument("--input", "-i", help="Input log file or glob pattern")
     parser.add_argument("--dir", help="Directory containing log files")
     parser.add_argument("--output", "-o", default="log_report.json", help="Output file path")
-    parser.add_argument("--format", choices=["json", "csv", "html"], default="json", help="Output format")
+    parser.add_argument("--format", choices=["json", "csv", "html", "jsonl"], default="json", help="Output format")
     parser.add_argument("--search", help="Search for a string in logs")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return parser.parse_args()
@@ -456,6 +474,8 @@ def main():
         aggregator.export_csv(args.output)
     elif args.format == "html":
         aggregator.generate_html_report(args.output)
+    elif args.format == "jsonl":
+        aggregator.export_jsonl(args.output)
     else:
         aggregator.export_json(args.output)
 
