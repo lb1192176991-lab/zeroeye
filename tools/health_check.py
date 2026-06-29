@@ -63,49 +63,70 @@ DISK_THRESHOLD_CRITICAL = 90
 
 MEMORY_THRESHOLD_WARNING = 80
 MEMORY_THRESHOLD_CRITICAL = 90
+DEFAULT_RETRY_ATTEMPTS = 2
+DEFAULT_RETRY_DELAY_SECONDS = 0.25
 
 # ---------------------------------------------------------------------------
 # CHECK FUNCTIONS
 # ---------------------------------------------------------------------------
 
+
+def retry_check(operation, attempts: int = DEFAULT_RETRY_ATTEMPTS, delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS):
+    """Retry a transient check before surfacing it as a failure."""
+    last_result = None
+    for attempt in range(1, attempts + 1):
+        last_result = operation()
+        if last_result[0] == "OK":
+            return last_result
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+    return last_result
+
 def check_http_service(host: str, port: int, path: str, timeout: int) -> Tuple[str, str, int]:
     import http.client
-    try:
-        conn = http.client.HTTPConnection(host, port, timeout=timeout)
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        status = resp.status
-        body = resp.read().decode("utf-8", errors="replace")[:200]
-        conn.close()
 
-        if status == 200:
-            result = "OK"
-            detail = f"HTTP {status}"
-        elif status < 500:
-            result = "WARNING"
-            detail = f"HTTP {status}: {body[:100]}"
-        else:
-            result = "CRITICAL"
-            detail = f"HTTP {status}: {body[:100]}"
+    def attempt() -> Tuple[str, str, int]:
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            conn.request("GET", path)
+            resp = conn.getresponse()
+            status = resp.status
+            body = resp.read().decode("utf-8", errors="replace")[:200]
+            conn.close()
 
-        return result, detail, status
-    except Exception as e:
-        return "CRITICAL", str(e), 0
+            if status == 200:
+                result = "OK"
+                detail = f"HTTP {status}"
+            elif status < 500:
+                result = "WARNING"
+                detail = f"HTTP {status}: {body[:100]}"
+            else:
+                result = "CRITICAL"
+                detail = f"HTTP {status}: {body[:100]}"
+
+            return result, detail, status
+        except Exception as e:
+            return "CRITICAL", str(e), 0
+
+    return retry_check(attempt)
 
 
 def check_tcp_port(host: str, port: int, timeout: int) -> Tuple[str, str, float]:
-    try:
-        start = time.time()
-        sock = socket.create_connection((host, port), timeout=timeout)
-        sock.close()
-        latency = (time.time() - start) * 1000
-        return "OK", f"Connected ({latency:.1f}ms)", latency
-    except socket.timeout:
-        return "CRITICAL", f"Connection timeout ({timeout}s)", 0
-    except ConnectionRefusedError:
-        return "CRITICAL", "Connection refused", 0
-    except Exception as e:
-        return "CRITICAL", str(e), 0
+    def attempt() -> Tuple[str, str, float]:
+        try:
+            start = time.time()
+            sock = socket.create_connection((host, port), timeout=timeout)
+            sock.close()
+            latency = (time.time() - start) * 1000
+            return "OK", f"Connected ({latency:.1f}ms)", latency
+        except socket.timeout:
+            return "CRITICAL", f"Connection timeout ({timeout}s)", 0
+        except ConnectionRefusedError:
+            return "CRITICAL", "Connection refused", 0
+        except Exception as e:
+            return "CRITICAL", str(e), 0
+
+    return retry_check(attempt)
 
 
 def check_certificate_expiry(host: str, port: int = 443) -> Tuple[str, str, int]:
