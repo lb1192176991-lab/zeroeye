@@ -340,6 +340,83 @@ def check_prerequisites() -> list[str]:
 
     return missing
 
+
+def planned_build_commands(module: Module, release: bool = False) -> list[list[str]]:
+    """Return the shell commands that would run for a module without executing them."""
+    if module.name == "engine":
+        build_type = "Release" if release else "Debug"
+        commands = [
+            ["cmake", "-S", ".", "-B", "build", f"-DCMAKE_BUILD_TYPE={build_type}"],
+            ["cmake", "--build", "build"],
+        ]
+        if release:
+            commands[-1].extend(["--config", "Release"])
+        return commands
+
+    command = list(module.build_cmd)
+    if release and module.name == "backend":
+        command.append("--release")
+    return [command]
+
+
+def build_dry_run_plan(
+    selected: list[Module],
+    release: bool = False,
+    clean: bool = False,
+) -> dict:
+    """Build a machine-readable dry-run plan for the selected modules."""
+    commit_id = current_commit_id()
+    _, metadata_path, _ = diagnostic_paths_for_commit()
+    modules = []
+    for module in selected:
+        commands = [module.clean_cmd] if clean else planned_build_commands(module, release)
+        modules.append(
+            {
+                "name": module.name,
+                "language": module.language,
+                "dir": str(module.dir.relative_to(ROOT)),
+                "commands": commands,
+            }
+        )
+    plan = {
+        "action": "clean" if clean else "build",
+        "commit": commit_id,
+        "release": release,
+        "module_count": len(selected),
+        "modules": modules,
+        "side_effects": False,
+    }
+    if clean:
+        plan["diagnostic_cleanup"] = True
+    else:
+        plan["diagnostic_metadata"] = str(metadata_path.relative_to(ROOT))
+        plan["encryptly_preflight"] = True
+    return plan
+
+
+def print_dry_run_plan(plan: dict, fmt: str = "text") -> None:
+    if fmt == "json":
+        print(json.dumps(plan, indent=2))
+        return
+
+    action = plan["action"]
+    print(f"\n  {color('Dry run:', Colors.BOLD)} {action} plan")
+    print(f"  Commit id: {plan['commit']}")
+    print(f"  Release mode: {plan['release']}")
+    print(f"  Selected modules: {', '.join(m['name'] for m in plan['modules'])}")
+    for module in plan["modules"]:
+        print(f"\n  {color(module['name'] + ':', Colors.CYAN)}")
+        print(f"    dir: {module['dir']}")
+        for command in module["commands"]:
+            print(f"    command: {' '.join(command)}")
+    if action == "clean":
+        print("\n  Diagnostic artifacts would be removed if present.")
+    else:
+        print(f"\n  Diagnostic metadata: {plan['diagnostic_metadata']}")
+        print("  encryptly preflight would run before real builds.")
+    print(f"\n  {color('Dry run complete. No files changed.', Colors.GREEN)}")
+
+
 def build_module(
     module: Module,
     release: bool = False,
@@ -815,7 +892,7 @@ def print_summary(results: list[tuple[str, bool, float, str, Optional[str]]]):
           f"{color(str(failed) + ' failed', Colors.RED)}, "
           f"{total_time:.1f}s total")
 
-def main():
+def main(argv: Optional[list[str]] = None):
     parser = argparse.ArgumentParser(
         description="Tent of Trials  -  Multi-Language Build System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -824,6 +901,8 @@ Examples:
   python3 build.py                    Build all modules
   python3 build.py -m backend         Build only backend
   python3 build.py -m frontend,market Build frontend and market
+  python3 build.py -m backend --dry-run  Show what would run (text)
+  python3 build.py -m backend --dry-run --dry-run-format json  Machine-readable plan
   python3 build.py --clean            Clean all artifacts
   python3 build.py --release          Release build (Rust only)
   python3 build.py --verbose          Verbose output
@@ -850,15 +929,28 @@ Diagnostic bundle:
         help="Show detailed build output",
     )
     parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the selected plan without cleaning, checking encryptly, or building",
+    )
+    parser.add_argument(
+        "--dry-run-format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format for --dry-run (default: text)",
+    )
+    parser.add_argument(
         "--list", action="store_true",
         help="List available modules and exit",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    print(f"\n  {color('Tent of Trials: building', Colors.CYAN)}")
-    print(f"  Working directory: {ROOT}")
-    print()
+    json_dry_run = args.dry_run and args.dry_run_format == "json"
+
+    if not json_dry_run:
+        print(f"\n  {color('Tent of Trials: building', Colors.CYAN)}")
+        print(f"  Working directory: {ROOT}")
+        print()
 
     if args.list:
         print(f"  {color('Available modules:', Colors.BOLD)}")
@@ -868,17 +960,20 @@ Diagnostic bundle:
             print(f"      build: {' '.join(m.build_cmd)}")
         return 0
 
-    print(f"  {color('Checking prerequisites...', Colors.GRAY)}")
-    missing = check_prerequisites()
-    if missing:
-        print(f"\n  {color('⚠ Some tools missing  -  will try anyway:', Colors.YELLOW)}")
-        for m in missing:
-            print(f"    {m}")
-
-        msg = "Not all modules will build. That's fine."
-        print(f"  {color(msg, Colors.GRAY)}")
+    if not json_dry_run:
+        print(f"  {color('Checking prerequisites...', Colors.GRAY)}")
+        missing = check_prerequisites()
+        if missing:
+            print(f"\n  {color('⚠ Some tools missing  -  will try anyway:', Colors.YELLOW)}")
+            for m in missing:
+                print(f"    {m}")
+            msg = "Not all modules will build. That's fine."
+            print(f"  {color(msg, Colors.GRAY)}")
+        else:
+            print(f"  {color('✓ All prerequisites found', Colors.GREEN)}")
     else:
-        print(f"  {color('✓ All prerequisites found', Colors.GREEN)}")
+        missing = check_prerequisites()
+
     if args.module == "all":
         selected = MODULES
     else:
@@ -892,6 +987,11 @@ Diagnostic bundle:
 
     if not selected:
         print(f"  No modules selected.")
+        return 0
+
+    if args.dry_run:
+        plan = build_dry_run_plan(selected, release=args.release, clean=args.clean)
+        print_dry_run_plan(plan, fmt=args.dry_run_format)
         return 0
 
     if args.clean:
