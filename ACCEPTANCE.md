@@ -4,6 +4,7 @@
 - [x] Same seed → identical JSON output across runs
 - [x] Different seed → different data
 - [x] CLI integration test (temp dir, byte-identical files)
-- [x] Tests: `bash run_tests.sh` (3 cases)
+- [x] Default seed constant (42) asserted in tests
+- [x] Tests: `bash run_tests.sh` (4 cases)
 
 /claim #2 — PR ready for merge.

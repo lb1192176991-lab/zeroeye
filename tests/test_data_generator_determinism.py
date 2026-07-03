@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from data_generator import DataGenerator  # noqa: E402
+from data_generator import DEFAULT_SEED, DataGenerator  # noqa: E402
 
 
 def generated_snapshot(seed: int):
@@ -36,6 +36,11 @@ class DataGeneratorDeterminismTests(unittest.TestCase):
 
     def test_different_seed_changes_data(self):
         self.assertNotEqual(generated_snapshot(123)["users"], generated_snapshot(456)["users"])
+
+    def test_default_seed_matches_explicit_42(self):
+        self.assertEqual(DEFAULT_SEED, 42)
+        self.assertEqual(generated_snapshot(DEFAULT_SEED), generated_snapshot(42))
+        self.assertEqual(DataGenerator().seed, DEFAULT_SEED)
 
     def test_cli_same_seed_writes_identical_json_files(self):
         with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
