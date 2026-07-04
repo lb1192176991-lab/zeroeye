@@ -42,6 +42,16 @@ class DataGeneratorDeterminismTests(unittest.TestCase):
         self.assertEqual(generated_snapshot(DEFAULT_SEED), generated_snapshot(42))
         self.assertEqual(DataGenerator().seed, DEFAULT_SEED)
 
+    def test_seed_zero_is_deterministic(self):
+        self.assertEqual(generated_snapshot(0), generated_snapshot(0))
+        self.assertNotEqual(generated_snapshot(0)["orders"], generated_snapshot(1)["orders"])
+
+    def test_trades_snapshot_stable_for_fixed_seed(self):
+        gen = DataGenerator(seed=99)
+        first = gen.generate_trades(10)
+        second = DataGenerator(seed=99).generate_trades(10)
+        self.assertEqual(first, second)
+
     def test_cli_same_seed_writes_identical_json_files(self):
         with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
             command = [
