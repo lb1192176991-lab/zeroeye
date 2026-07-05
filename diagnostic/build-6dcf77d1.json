@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-07-05T21:10:16.824683+00:00",
+  "commit": "6dcf77d1",
+  "diagnostic_logd": "diagnostic/build-6dcf77d1.logd",
+  "diagnostic_logd_error": null,
+  "message_blocker": null,
+  "chunked": false,
+  "chunk_size_bytes": null,
+  "password": "c0185c0327ad28ab8b4b",
+  "decrypt_command": "encryptly unpack diagnostic/build-6dcf77d1.logd <outdir> --password c0185c0327ad28ab8b4b",
+  "total_modules": 1,
+  "passed": 1,
+  "failed": 0,
+  "modules": [
+    {
+      "name": "v2-market-stream",
+      "status": "PASS",
+      "elapsed_seconds": 0.048,
+      "artifact": null,
+      "output": "Syntax OK"
+    }
+  ],
+  "pr_note": "Include the encrypted diagnostic logd artifact(s): diagnostic/build-6dcf77d1.logd. The encrypted .logd is the required diagnostic content for PR review; this JSON file is metadata. Maintainers may ask you to remove these diagnostic artifacts before merging."
+}
