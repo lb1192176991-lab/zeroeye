@@ -64,6 +64,37 @@ DISK_THRESHOLD_CRITICAL = 90
 MEMORY_THRESHOLD_WARNING = 80
 MEMORY_THRESHOLD_CRITICAL = 90
 
+DEFAULT_MAX_RETRIES = int(os.environ.get("HEALTH_CHECK_MAX_RETRIES", "3"))
+DEFAULT_RETRY_BACKOFF = float(os.environ.get("HEALTH_CHECK_RETRY_BACKOFF", "0.25"))
+
+
+class TransientCheckError(Exception):
+    """Raised when a health probe fails in a way that may succeed on retry."""
+
+
+def retry_transient(
+    probe,
+    *args,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    backoff_base: float = DEFAULT_RETRY_BACKOFF,
+    **kwargs,
+):
+    """Run probe with exponential backoff on transient failures."""
+    attempts = max(1, max_retries)
+    last_error: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return probe(*args, **kwargs)
+        except TransientCheckError as exc:
+            last_error = exc
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(backoff_base * (2 ** attempt))
+    if last_error is not None:
+        raise last_error
+    raise TransientCheckError("probe failed without detail")
+
+
 # ---------------------------------------------------------------------------
 # CHECK FUNCTIONS
 # ---------------------------------------------------------------------------
@@ -79,18 +110,41 @@ def check_http_service(host: str, port: int, path: str, timeout: int) -> Tuple[s
         conn.close()
 
         if status == 200:
-            result = "OK"
-            detail = f"HTTP {status}"
+            return "OK", f"HTTP {status}", status
         elif status < 500:
             result = "WARNING"
             detail = f"HTTP {status}: {body[:100]}"
-        else:
-            result = "CRITICAL"
-            detail = f"HTTP {status}: {body[:100]}"
+            return result, detail, status
 
-        return result, detail, status
+        raise TransientCheckError(f"HTTP {status}: {body[:100]}")
+    except TransientCheckError:
+        raise
+    except (TimeoutError, socket.timeout, ConnectionError, OSError) as e:
+        raise TransientCheckError(str(e)) from e
     except Exception as e:
         return "CRITICAL", str(e), 0
+
+
+def check_http_service_with_retry(
+    host: str,
+    port: int,
+    path: str,
+    timeout: int,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    backoff_base: float = DEFAULT_RETRY_BACKOFF,
+) -> Tuple[str, str, int]:
+    try:
+        return retry_transient(
+            check_http_service,
+            host,
+            port,
+            path,
+            timeout,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+        )
+    except TransientCheckError as exc:
+        return "CRITICAL", str(exc), 0
 
 
 def check_tcp_port(host: str, port: int, timeout: int) -> Tuple[str, str, float]:
@@ -100,12 +154,34 @@ def check_tcp_port(host: str, port: int, timeout: int) -> Tuple[str, str, float]
         sock.close()
         latency = (time.time() - start) * 1000
         return "OK", f"Connected ({latency:.1f}ms)", latency
-    except socket.timeout:
-        return "CRITICAL", f"Connection timeout ({timeout}s)", 0
+    except (socket.timeout, TimeoutError):
+        raise TransientCheckError(f"Connection timeout ({timeout}s)")
     except ConnectionRefusedError:
-        return "CRITICAL", "Connection refused", 0
+        raise TransientCheckError("Connection refused")
+    except OSError as e:
+        raise TransientCheckError(str(e)) from e
     except Exception as e:
         return "CRITICAL", str(e), 0
+
+
+def check_tcp_port_with_retry(
+    host: str,
+    port: int,
+    timeout: int,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    backoff_base: float = DEFAULT_RETRY_BACKOFF,
+) -> Tuple[str, str, float]:
+    try:
+        return retry_transient(
+            check_tcp_port,
+            host,
+            port,
+            timeout,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+        )
+    except TransientCheckError as exc:
+        return "CRITICAL", str(exc), 0
 
 
 def check_certificate_expiry(host: str, port: int = 443) -> Tuple[str, str, int]:
@@ -200,7 +276,12 @@ def check_load_average() -> Tuple[str, str, float]:
 # HEALTH CHECK RUNNER
 # ---------------------------------------------------------------------------
 
-def run_health_checks(service: Optional[str] = None, json_output: bool = False) -> Dict[str, Any]:
+def run_health_checks(
+    service: Optional[str] = None,
+    json_output: bool = False,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_backoff: float = DEFAULT_RETRY_BACKOFF,
+) -> Dict[str, Any]:
     results: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "hostname": socket.gethostname(),
@@ -216,8 +297,13 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
     for name, config in SERVICES.items():
         if service and name != service:
             continue
-        status, detail, code = check_http_service(
-            config["host"], config["port"], config["path"], config["timeout"]
+        status, detail, code = check_http_service_with_retry(
+            config["host"],
+            config["port"],
+            config["path"],
+            config["timeout"],
+            max_retries=max_retries,
+            backoff_base=retry_backoff,
         )
         results["services"][name] = {
             "status": status,
@@ -232,7 +318,13 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
     for name, config in INFRASTRUCTURE.items():
         if service and name != service:
             continue
-        status, detail, latency = check_tcp_port(config["host"], config["port"], config["timeout"])
+        status, detail, latency = check_tcp_port_with_retry(
+            config["host"],
+            config["port"],
+            config["timeout"],
+            max_retries=max_retries,
+            backoff_base=retry_backoff,
+        )
         results["infrastructure"][name] = {
             "status": status,
             "detail": detail,
@@ -307,6 +399,18 @@ def parse_args():
     parser.add_argument("--watch", "-w", action="store_true", help="Continuous monitoring")
     parser.add_argument("--interval", "-i", type=int, default=30, help="Check interval in seconds")
     parser.add_argument("--output", "-o", help="Output file path")
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=DEFAULT_MAX_RETRIES,
+        help="Retries for transient HTTP/TCP probe failures (default: 3)",
+    )
+    parser.add_argument(
+        "--retry-backoff",
+        type=float,
+        default=DEFAULT_RETRY_BACKOFF,
+        help="Base backoff seconds between retries (default: 0.25)",
+    )
     return parser.parse_args()
 
 
@@ -317,7 +421,12 @@ def main():
         print(f"Continuous monitoring (interval: {args.interval}s). Press Ctrl+C to stop.")
         try:
             while True:
-                results = run_health_checks(args.service, args.json)
+                results = run_health_checks(
+                    args.service,
+                    args.json,
+                    max_retries=args.max_retries,
+                    retry_backoff=args.retry_backoff,
+                )
                 if args.json:
                     print(json.dumps(results, indent=2))
                 else:
@@ -326,7 +435,12 @@ def main():
         except KeyboardInterrupt:
             print("\nMonitoring stopped")
     else:
-        results = run_health_checks(args.service, args.json)
+        results = run_health_checks(
+            args.service,
+            args.json,
+            max_retries=args.max_retries,
+            retry_backoff=args.retry_backoff,
+        )
         if args.json:
             output = json.dumps(results, indent=2)
             print(output)
