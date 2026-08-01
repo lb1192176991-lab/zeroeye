@@ -359,6 +359,55 @@ class LogAggregator:
             }, f, indent=2, default=str)
         logger.info(f"Report exported to {output_path}")
 
+    # JSON Lines (https://jsonlines.org/) output: one self-contained JSON
+    # object per line, terminated by '\n'. Distinct from ``export_json`` which
+    # emits a single envelope with embedded arrays; the JSONL format is the
+    # machine-friendly target requested by the upstream Kickama #305 effort.
+    JSONL_FIELDS = ('timestamp', 'level', 'service', 'message', 'format')
+
+    def export_jsonl(self, output_path=None, stream=None, max_entries: int = 10000):
+        """Write entries as JSON Lines.
+
+        ``output_path`` and ``stream`` are mutually exclusive. When ``stream``
+        is provided the caller controls flushing/closing. When ``output_path``
+        is ``None`` the data is written to ``sys.stdout`` (this is the
+        default so the format is stream-pipe friendly).
+        """
+        if output_path is not None and stream is not None:
+            raise ValueError("export_jsonl accepts output_path or stream, not both")
+
+        close_after = False
+        if output_path is not None:
+            stream = open(output_path, 'w', encoding='utf-8')
+            close_after = True
+        elif stream is None:
+            stream = sys.stdout
+
+        out_stream = stream  # narrowed non-None for type checkers
+        try:
+            count = 0
+            for entry in self.entries[:max_entries]:
+                out_stream.write(self._entry_to_jsonl(entry))
+                out_stream.write('\n')
+                count += 1
+        finally:
+            if close_after:
+                out_stream.close()
+
+        logger.info(
+            f"Exported {count} entries as JSONL"
+            + (f" to {output_path}" if output_path else " to stdout")
+        )
+        return count
+
+    def _entry_to_jsonl(self, entry: Dict[str, Any]) -> str:
+        record = {field: entry.get(field) for field in self.JSONL_FIELDS}
+        # ``ensure_ascii=False`` keeps non-ASCII log content (service names,
+        # CJK messages, etc.) readable in the output stream. ``default=str``
+        # is a safety net for any non-serializable leftovers so the line is
+        # always well-formed JSON.
+        return json.dumps(record, ensure_ascii=False, default=str)
+
     def generate_html_report(self, output_path: str):
         summary = self.get_summary()
         html = f"""<!DOCTYPE html>
@@ -409,7 +458,9 @@ def parse_args():
     parser.add_argument("--input", "-i", help="Input log file or glob pattern")
     parser.add_argument("--dir", help="Directory containing log files")
     parser.add_argument("--output", "-o", default="log_report.json", help="Output file path")
-    parser.add_argument("--format", choices=["json", "csv", "html"], default="json", help="Output format")
+    parser.add_argument("--format", choices=["json", "csv", "html", "jsonl"], default="json", help="Output format")
+    parser.add_argument("--stdout", action="store_true",
+                        help="For jsonl format, write to stdout instead of --output file.")
     parser.add_argument("--search", help="Search for a string in logs")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return parser.parse_args()
@@ -456,6 +507,11 @@ def main():
         aggregator.export_csv(args.output)
     elif args.format == "html":
         aggregator.generate_html_report(args.output)
+    elif args.format == "jsonl":
+        if args.stdout:
+            aggregator.export_jsonl(stream=sys.stdout)
+        else:
+            aggregator.export_jsonl(args.output)
     else:
         aggregator.export_json(args.output)
 
