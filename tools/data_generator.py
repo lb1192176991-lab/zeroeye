@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""
-Legacy test data generator for development and testing environments.
-Generates realistic-looking market data, orders, trades, and user data
-for use in development and staging environments where real data cannot
-be used due to compliance requirements.
-
-The data generator uses seeded random number generation to produce
-deterministic output for reproducible test scenarios. Change the seed
-to generate different datasets.
-
-WARNING: The generated data is NOT suitable for production use. It does
-NOT follow real market distributions, correlation patterns, or regulatory
-requirements. Using this data for performance testing will produce
-misleading results because the data distribution is uniform rather than
-following the power-law distributions seen in real markets.
-"""
 
 import argparse
 import csv
@@ -27,31 +11,29 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-# ---------------------------------------------------------------------------
-# CONSTANTS
-# ---------------------------------------------------------------------------
+BASE_TIMESTAMP = 1704067200000
 
 INSTRUMENTS = [
-    {"symbol": "BTC/USD", "base": "BTC", "quote": "USD", "type": "crypto",
-     "tick_size": 0.01, "lot_size": 0.0001, "price": 50000.0, "vol": 0.5},
-    {"symbol": "ETH/USD", "base": "ETH", "quote": "USD", "type": "crypto",
-     "tick_size": 0.01, "lot_size": 0.001, "price": 3000.0, "vol": 5.0},
-    {"symbol": "SOL/USD", "base": "SOL", "quote": "USD", "type": "crypto",
-     "tick_size": 0.001, "lot_size": 0.01, "price": 120.0, "vol": 50.0},
-    {"symbol": "AVAX/USD", "base": "AVAX", "quote": "USD", "type": "crypto",
-     "tick_size": 0.001, "lot_size": 0.01, "price": 35.0, "vol": 100.0},
-    {"symbol": "LINK/USD", "base": "LINK", "quote": "USD", "type": "crypto",
-     "tick_size": 0.001, "lot_size": 0.1, "price": 15.0, "vol": 200.0},
-    {"symbol": "AAPL", "base": "AAPL", "quote": "USD", "type": "stock",
-     "tick_size": 0.01, "lot_size": 1, "price": 180.0, "vol": 1000.0},
-    {"symbol": "GOOGL", "base": "GOOGL", "quote": "USD", "type": "stock",
-     "tick_size": 0.01, "lot_size": 1, "price": 140.0, "vol": 800.0},
-    {"symbol": "MSFT", "base": "MSFT", "quote": "USD", "type": "stock",
-     "tick_size": 0.01, "lot_size": 1, "price": 380.0, "vol": 500.0},
-    {"symbol": "TSLA", "base": "TSLA", "quote": "USD", "type": "stock",
-     "tick_size": 0.01, "lot_size": 1, "price": 240.0, "vol": 2000.0},
-    {"symbol": "AMZN", "base": "AMZN", "quote": "USD", "type": "stock",
-     "tick_size": 0.01, "lot_size": 1, "price": 150.0, "vol": 1200.0},
+        {"symbol": "BTC/USD", "base": "BTC", "quote": "USD", "type": "crypto",
+              "tick_size": 0.01, "lot_size": 0.0001, "price": 50000.0, "vol": 0.5},
+        {"symbol": "ETH/USD", "base": "ETH", "quote": "USD", "type": "crypto",
+              "tick_size": 0.01, "lot_size": 0.001, "price": 3000.0, "vol": 5.0},
+        {"symbol": "SOL/USD", "base": "SOL", "quote": "USD", "type": "crypto",
+              "tick_size": 0.001, "lot_size": 0.01, "price": 120.0, "vol": 50.0},
+        {"symbol": "AVAX/USD", "base": "AVAX", "quote": "USD", "type": "crypto",
+              "tick_size": 0.001, "lot_size": 0.01, "price": 35.0, "vol": 100.0},
+        {"symbol": "LINK/USD", "base": "LINK", "quote": "USD", "type": "crypto",
+              "tick_size": 0.001, "lot_size": 0.1, "price": 15.0, "vol": 200.0},
+        {"symbol": "AAPL", "base": "AAPL", "quote": "USD", "type": "stock",
+              "tick_size": 0.01, "lot_size": 1, "price": 180.0, "vol": 1000.0},
+        {"symbol": "GOOGL", "base": "GOOGL", "quote": "USD", "type": "stock",
+              "tick_size": 0.01, "lot_size": 1, "price": 140.0, "vol": 800.0},
+        {"symbol": "MSFT", "base": "MSFT", "quote": "USD", "type": "stock",
+              "tick_size": 0.01, "lot_size": 1, "price": 380.0, "vol": 500.0},
+        {"symbol": "TSLA", "base": "TSLA", "quote": "USD", "type": "stock",
+              "tick_size": 0.01, "lot_size": 1, "price": 240.0, "vol": 2000.0},
+        {"symbol": "AMZN", "base": "AMZN", "quote": "USD", "type": "stock",
+              "tick_size": 0.01, "lot_size": 1, "price": 150.0, "vol": 1200.0},
 ]
 
 ORDER_SIDES = ["buy", "sell"]
@@ -60,186 +42,192 @@ ORDER_STATUSES = ["new", "filled", "partially_filled", "cancelled", "rejected", 
 TIME_IN_FORCE = ["gtc", "ioc", "fok", "day"]
 
 FIRST_NAMES = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Hank",
-               "Ivy", "Jack", "Kate", "Leo", "Mia", "Noah", "Olivia", "Paul",
-               "Quinn", "Rose", "Sam", "Tina", "Uma", "Victor", "Wendy", "Xander",
-               "Yuki", "Zara", "Aiden", "Bella", "Carlos", "Daisy", "Elijah", "Fiona"]
+                              "Ivy", "Jack", "Kate", "Leo", "Mia", "Noah", "Olivia", "Paul",
+                              "Quinn", "Rose", "Sam", "Tina", "Uma", "Victor", "Wendy", "Xander",
+                              "Yuki", "Zara", "Aiden", "Bella", "Carlos", "Daisy", "Elijah", "Fiona"]
 
 LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
-              "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
-              "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
-              "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark",
-              "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King",
-              "Wright", "Scott", "Torres", "Hill", "Green", "Adams", "Baker", "Nelson",
-              "Carter", "Mitchell", "Roberts", "Turner", "Phillips", "Campbell"]
+                            "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
+                            "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
+                            "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark",
+                            "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King",
+                            "Wright", "Scott", "Torres", "Hill", "Green", "Adams", "Baker", "Nelson",
+                            "Carter", "Mitchell", "Roberts", "Turner", "Phillips", "Campbell"]
 
 DOMAINS = ["example.com", "test.org", "demo.net", "sample.io", "mock.dev",
-           "fictitious.co", "imaginary.app", "pretend.tech", "dummy.biz",
-           "simulated.com", "testmail.com", "inbox.test"]
+                      "fictitious.co", "imaginary.app", "pretend.tech", "dummy.biz",
+                      "simulated.com", "testmail.com", "inbox.test"]
 
-def gaussian_random(mean: float, stddev: float) -> float:
-    return random.gauss(mean, stddev)
+def gaussian_random(mean: float, stddev: float, rng: Optional[random.Random] = None) -> float:
+        r = rng if rng is not None else random
+        return r.gauss(mean, stddev)
 
 def clamp(value: float, min_val: float, max_val: float) -> float:
-    return max(min_val, min(max_val, value))
+        return max(min_val, min(max_val, value))
 
 def round_to_tick(value: float, tick_size: float) -> float:
-    return round(value / tick_size) * tick_size
+        return round(value / tick_size) * tick_size
 
-def random_phone() -> str:
-    return f"+1-{random.randint(200, 999)}-{random.randint(100, 999)}-{random.randint(1000, 9999)}"
+def random_phone(rng: Optional[random.Random] = None) -> str:
+        r = rng if rng is not None else random
+        return f"+1-{r.randint(200, 999)}-{r.randint(100, 999)}-{r.randint(1000, 9999)}"
 
-def random_email(first: str, last: str) -> str:
-    domain = random.choice(DOMAINS)
-    pattern = random.choice([
-        f"{first.lower()}.{last.lower()}",
-        f"{first.lower()}{last.lower()}",
-        f"{first[0].lower()}{last.lower()}",
-        f"{last.lower()}.{first.lower()}",
-        f"{first.lower()}{random.randint(1, 999)}",
-    ])
-    return f"{pattern}@{domain}"
+def random_email(first: str, last: str, rng: Optional[random.Random] = None) -> str:
+        r = rng if rng is not None else random
+        domain = r.choice(DOMAINS)
+        pattern = r.choice([
+            f"{first.lower()}.{last.lower()}",
+            f"{first.lower()}{last.lower()}",
+            f"{first[0].lower()}{last.lower()}",
+            f"{last.lower()}.{first.lower()}",
+            f"{first.lower()}{r.randint(1, 999)}",
+        ])
+        return f"{pattern}@{domain}"
 
-def random_datetime(start_year: int = 2023, end_year: int = 2024) -> datetime:
-    start = datetime(start_year, 1, 1, tzinfo=timezone.utc)
-    end = datetime(end_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-    delta = end - start
-    return start + timedelta(seconds=random.randint(0, int(delta.total_seconds())))
+def random_datetime(start_year: int = 2023, end_year: int = 2024, rng: Optional[random.Random] = None) -> datetime:
+        r = rng if rng is not None else random
+        start = datetime(start_year, 1, 1, tzinfo=timezone.utc)
+        end = datetime(end_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        delta = end - start
+        return start + timedelta(seconds=r.randint(0, int(delta.total_seconds())))
 
 
 class DataGenerator:
-    def __init__(self, seed: int = 42):
-        self.random = random.Random(seed)
-        self.instruments = INSTRUMENTS
-        self.users: List[Dict[str, Any]] = []
-        self.orders: List[Dict[str, Any]] = []
-        self.trades: List[Dict[str, Any]] = []
-        self.ticks: Dict[str, List[Dict[str, Any]]] = {}
-        self.user_counter = 0
-        self.order_counter = 0
-        self.trade_counter = 0
+        def __init__(self, seed: int = 42, base_timestamp: int = BASE_TIMESTAMP):
+                    self.seed = seed
+                    self.base_timestamp = base_timestamp
+                    self.random = random.Random(seed)
+                    self.instruments = INSTRUMENTS
+                    self.users: List[Dict[str, Any]] = []
+                    self.orders: List[Dict[str, Any]] = []
+                    self.trades: List[Dict[str, Any]] = []
+                    self.ticks: Dict[str, List[Dict[str, Any]]] = {}
+                    self.user_counter = 0
+                    self.order_counter = 0
+                    self.trade_counter = 0
 
-    def generate_users(self, count: int = 50) -> List[Dict[str, Any]]:
-        self.users = []
-        for _ in range(count):
-            self.user_counter += 1
-            first = self.random.choice(FIRST_NAMES)
-            last = self.random.choice(LAST_NAMES)
-            user = {
-                "id": f"user_{self.user_counter:04d}",
-                "email": random_email(first, last),
-                "name": f"{first} {last}",
-                "role": self.random.choice(["trader", "trader", "trader", "admin",
-                                            "analyst", "viewer"]),
-                "status": self.random.choice(["active", "active", "active", "active", "inactive"]),
-                "mfa_enabled": self.random.random() < 0.3,
-                "email_verified": self.random.random() < 0.95,
-                "created_at": random_datetime().isoformat(),
-                "last_login": random_datetime(2024, 2024).isoformat(),
-                "phone": random_phone(),
-                "preferences": {
-                    "theme": self.random.choice(["dark", "light"]),
-                    "language": "en",
-                    "timezone": "America/New_York",
-                    "notifications": {
-                        "email": True,
-                        "push": self.random.random() < 0.5,
-                    },
-                },
-            }
-            self.users.append(user)
-        return self.users
+        def generate_users(self, count: int = 50) -> List[Dict[str, Any]]:
+                    self.users = []
+                    for _ in range(count):
+                                    self.user_counter += 1
+                                    first = self.random.choice(FIRST_NAMES)
+                                    last = self.random.choice(LAST_NAMES)
+                                    user = {
+                                        "id": f"user_{self.user_counter:04d}",
+                                        "email": random_email(first, last, rng=self.random),
+                                        "name": f"{first} {last}",
+                                        "role": self.random.choice(["trader", "trader", "trader", "admin",
+                                                                    "analyst", "viewer"]),
+                                        "status": self.random.choice(["active", "active", "active", "active", "inactive"]),
+                                        "mfa_enabled": self.random.random() < 0.3,
+                                        "email_verified": self.random.random() < 0.95,
+                                        "created_at": random_datetime(rng=self.random).isoformat(),
+                                        "last_login": random_datetime(2024, 2024, rng=self.random).isoformat(),
+                                        "phone": random_phone(rng=self.random),
+                                        "preferences": {
+                                            "theme": self.random.choice(["dark", "light"]),
+                                            "language": "en",
+                                            "timezone": "America/New_York",
+                                            "notifications": {
+                                                "email": True,
+                                                "push": self.random.random() < 0.5,
+                                            },
+                                        },
+                                    }
+                                    self.users.append(user)
+                                return self.users
 
-    def generate_orders(self, count: int = 200) -> List[Dict[str, Any]]:
-        if not self.users:
-            self.generate_users(20)
+        def generate_orders(self, count: int = 200) -> List[Dict[str, Any]]:
+                    if not self.users:
+                                    self.generate_users(20)
 
-        self.orders = []
-        for _ in range(count):
-            self.order_counter += 1
-            instrument = self.random.choice(self.instruments)
-            user = self.random.choice(self.users)
-            side = self.random.choice(ORDER_SIDES)
-            order_type = self.random.choice(ORDER_TYPES)
-            price = instrument["price"] * (1 + self.random.uniform(-0.05, 0.05))
-            price = round_to_tick(price, instrument["tick_size"])
-            quantity = round_to_tick(
-                self.random.expovariate(1.0 / instrument["vol"]),
-                instrument["lot_size"]
-            )
+                    self.orders = []
+                    for _ in range(count):
+                                    self.order_counter += 1
+                                    instrument = self.random.choice(self.instruments)
+                                    user = self.random.choice(self.users)
+                                    side = self.random.choice(ORDER_SIDES)
+                                    order_type = self.random.choice(ORDER_TYPES)
+                                    price = instrument["price"] * (1 + self.random.uniform(-0.05, 0.05))
+                                    price = round_to_tick(price, instrument["tick_size"])
+                                    quantity = round_to_tick(
+                                        self.random.expovariate(1.0 / instrument["vol"]),
+                                        instrument["lot_size"]
+                                    )
 
-            order = {
-                "id": f"ord_{self.order_counter:06d}",
-                "client_order_id": f"client_{self.order_counter:06d}",
-                "user_id": user["id"],
-                "instrument": instrument["symbol"],
-                "side": side,
-                "type": order_type,
-                "price": price if order_type != "market" else None,
-                "quantity": quantity,
-                "time_in_force": self.random.choice(TIME_IN_FORCE),
-                "status": self.random.choice(ORDER_STATUSES),
-                "filled_quantity": 0,
-                "avg_fill_price": None,
-                "created_at": random_datetime().isoformat(),
-                "updated_at": random_datetime(2024, 2024).isoformat(),
-            }
-            self.orders.append(order)
+                        order = {
+                            "id": f"ord_{self.order_counter:06d}",
+                            "client_order_id": f"client_{self.order_counter:06d}",
+                            "user_id": user["id"],
+                            "instrument": instrument["symbol"],
+                            "side": side,
+                            "type": order_type,
+                            "price": price if order_type != "market" else None,
+                            "quantity": quantity,
+                            "time_in_force": self.random.choice(TIME_IN_FORCE),
+                            "status": self.random.choice(ORDER_STATUSES),
+                            "filled_quantity": 0,
+                            "avg_fill_price": None,
+                            "created_at": random_datetime(rng=self.random).isoformat(),
+                            "updated_at": random_datetime(2024, 2024, rng=self.random).isoformat(),
+                    }
+                        self.orders.append(order)
 
-        return self.orders
+            return self.orders
 
     def generate_trades(self, count: int = 500) -> List[Dict[str, Any]]:
-        if not self.users:
-            self.generate_users(20)
+                if not self.users:
+                                self.generate_users(20)
 
-        self.trades = []
-        for _ in range(count):
-            self.trade_counter += 1
-            instrument = self.random.choice(self.instruments)
-            side = self.random.choice(ORDER_SIDES)
-            price = instrument["price"] * (1 + self.random.uniform(-0.02, 0.02))
-            price = round_to_tick(price, instrument["tick_size"])
-            quantity = round_to_tick(
-                self.random.expovariate(1.0 / instrument["vol"]),
-                instrument["lot_size"]
-            )
+                self.trades = []
+                for _ in range(count):
+                                self.trade_counter += 1
+                                instrument = self.random.choice(self.instruments)
+                                side = self.random.choice(ORDER_SIDES)
+                                price = instrument["price"] * (1 + self.random.uniform(-0.02, 0.02))
+                                price = round_to_tick(price, instrument["tick_size"])
+                                quantity = round_to_tick(
+                                    self.random.expovariate(1.0 / instrument["vol"]),
+                                    instrument["lot_size"]
+                                )
 
-            trade = {
-                "id": f"trade_{self.trade_counter:06d}",
-                "instrument": instrument["symbol"],
-                "price": price,
-                "quantity": quantity,
-                "total": round(price * quantity, 2),
-                "side": side,
-                "timestamp": random_datetime(2024, 2024).isoformat(),
-                "buyer": self.random.choice(self.users)["id"],
-                "seller": self.random.choice(self.users)["id"],
-                "buyer_fee": round(price * quantity * 0.001, 2),
-                "seller_fee": round(price * quantity * 0.001, 2),
-            }
+                    trade = {
+                        "id": f"trade_{self.trade_counter:06d}",
+                                        "instrument": instrument["symbol"],
+                                        "price": price,
+                                        "quantity": quantity,
+                                        "total": round(price * quantity, 2),
+                                        "side": side,
+                                        "timestamp": random_datetime(2024, 2024, rng=self.random).isoformat(),
+                                        "buyer": self.random.choice(self.users)["id"],
+                                        "seller": self.random.choice(self.users)["id"],
+                                        "buyer_fee": round(price * quantity * 0.001, 2),
+                                        "seller_fee": round(price * quantity * 0.001, 2),
+                    }
             self.trades.append(trade)
 
         return self.trades
 
     def generate_ticks(self, instrument_symbol: str, count: int = 1000) -> List[Dict[str, Any]]:
-        instrument = next(i for i in self.instruments if i["symbol"] == instrument_symbol)
+                instrument = next(i for i in self.instruments if i["symbol"] == instrument_symbol)
         ticks = []
         price = instrument["price"]
 
         for i in range(count):
-            change = price * self.random.gauss(0, 0.002)
-            price = price + change
-            price = round_to_tick(price, instrument["tick_size"])
-            price = max(price, instrument["tick_size"])
+                        change = price * self.random.gauss(0, 0.002)
+                        price = price + change
+                        price = round_to_tick(price, instrument["tick_size"])
+                        price = max(price, instrument["tick_size"])
 
             tick = {
-                "instrument": instrument_symbol,
-                "price": price,
-                "bid": round_to_tick(price - instrument["tick_size"] * self.random.randint(1, 5),
-                                    instrument["tick_size"]),
-                "ask": round_to_tick(price + instrument["tick_size"] * self.random.randint(1, 5),
-                                    instrument["tick_size"]),
-                "volume": round(self.random.expovariate(1.0 / instrument["vol"]), 4),
-                "timestamp": int(time.time() * 1000) - (count - i) * 1000,
+                                "instrument": instrument_symbol,
+                                "price": price,
+                                "bid": round_to_tick(price - instrument["tick_size"] * self.random.randint(1, 5),
+                                                                                         instrument["tick_size"]),
+                                "ask": round_to_tick(price + instrument["tick_size"] * self.random.randint(1, 5),
+                                                                                         instrument["tick_size"]),
+                                "volume": round(self.random.expovariate(1.0 / instrument["vol"]), 4),
+                                "timestamp": self.base_timestamp - (count - i) * 1000,
             }
             ticks.append(tick)
 
@@ -247,54 +235,55 @@ class DataGenerator:
         return ticks
 
     def generate_candles(self, instrument_symbol: str, interval_minutes: int = 60,
-                         count: int = 500) -> List[Dict[str, Any]]:
-        instrument = next(i for i in self.instruments if i["symbol"] == instrument_symbol)
-        candles = []
-        price = instrument["price"]
-        now = int(time.time() * 1000)
-        interval_ms = interval_minutes * 60 * 1000
+                                                  count: int = 500) -> List[Dict[str, Any]]:
+                                                              instrument = next(i for i in self.instruments if i["symbol"] == instrument_symbol)
+                                                              candles = []
+                                                              price = instrument["price"]
+                                                              now = self.base_timestamp
+                                                              interval_ms = interval_minutes * 60 * 1000
 
         for i in range(count):
-            open_price = price
-            high_price = open_price * (1 + abs(self.random.gauss(0, 0.01)))
-            low_price = open_price * (1 - abs(self.random.gauss(0, 0.01)))
-            close_price = self.random.uniform(low_price, high_price)
-            price = close_price
+                        open_price = price
+                        high_price = open_price * (1 + abs(self.random.gauss(0, 0.01)))
+                        low_price = open_price * (1 - abs(self.random.gauss(0, 0.01)))
+                        close_price = self.random.uniform(low_price, high_price)
+                        price = close_price
 
             candle = {
-                "instrument": instrument_symbol,
-                "time": now - (count - i) * interval_ms,
-                "open": round(open_price, 2),
-                "high": round(high_price, 2),
-                "low": round(low_price, 2),
-                "close": round(close_price, 2),
-                "volume": round(self.random.expovariate(0.001), 2),
+                                "instrument": instrument_symbol,
+                                "time": now - (count - i) * interval_ms,
+                                "open": round(open_price, 2),
+                                "high": round(high_price, 2),
+                                "low": round(low_price, 2),
+                                "close": round(close_price, 2),
+                                "volume": round(self.random.expovariate(0.001), 2),
             }
             candles.append(candle)
 
         return candles
 
     def export_json(self, filepath: str, data: Any):
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2, default=str)
-        print(f"Exported {filepath} ({os.path.getsize(filepath)} bytes)")
+                with open(filepath, "w") as f:
+                                json.dump(data, f, indent=2, default=str)
+                            print(f"Exported {filepath} ({os.path.getsize(filepath)} bytes)")
 
     def export_csv(self, filepath: str, data: List[Dict], fieldnames: Optional[List[str]] = None):
-        if not data:
-            print(f"No data to export for {filepath}")
-            return
-        fn = fieldnames or list(data[0].keys())
+                if not data:
+                                print(f"No data to export for {filepath}")
+                                return
+                            fn = fieldnames or list(data[0].keys())
         with open(filepath, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fn, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(data)
-        print(f"Exported {filepath} ({os.path.getsize(filepath)} bytes, {len(data)} rows)")
+                        writer = csv.DictWriter(f, fieldnames=fn, extrasaction="ignore")
+                        writer.writeheader()
+                        writer.writerows(data)
+                    print(f"Exported {filepath} ({os.path.getsize(filepath)} bytes, {len(data)} rows)")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Test data generator")
+        parser = argparse.ArgumentParser(description="Test data generator")
     parser.add_argument("--output-dir", "-o", default="./test_data", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--base-timestamp", type=int, default=BASE_TIMESTAMP, help="Base timestamp in milliseconds")
     parser.add_argument("--users", type=int, default=50, help="Number of users to generate")
     parser.add_argument("--orders", type=int, default=200, help="Number of orders to generate")
     parser.add_argument("--trades", type=int, default=500, help="Number of trades to generate")
@@ -307,47 +296,41 @@ def parse_args():
 
 
 def main():
-    args = parse_args()
-    gen = DataGenerator(args.seed)
+        args = parse_args()
+    gen = DataGenerator(seed=args.seed, base_timestamp=args.base_timestamp)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     print(f"Generating test data with seed {args.seed}...")
 
-    # Generate users
     users = gen.generate_users(args.users)
     print(f"  Users: {len(users)}")
 
-    # Generate orders
     orders = gen.generate_orders(args.orders)
     print(f"  Orders: {len(orders)}")
 
-    # Generate trades
     trades = gen.generate_trades(args.trades)
     print(f"  Trades: {len(trades)}")
 
-    # Generate ticks for each instrument
     all_ticks = {}
     for inst in gen.instruments:
-        ticks = gen.generate_ticks(inst["symbol"], args.ticks)
+                ticks = gen.generate_ticks(inst["symbol"], args.ticks)
         all_ticks[inst["symbol"]] = ticks
         print(f"  Ticks ({inst['symbol']}): {len(ticks)}")
 
-    # Generate candles for each instrument
     all_candles = {}
     for inst in gen.instruments:
-        for interval in [1, 5, 15, 60, 240, 1440]:
-            candles = gen.generate_candles(inst["symbol"], interval, args.candles)
-            key = f"{inst['symbol']}_{interval}min"
-            all_candles[key] = candles
+                for interval in [1, 5, 15, 60, 240, 1440]:
+                                candles = gen.generate_candles(inst["symbol"], interval, args.candles)
+                                key = f"{inst['symbol']}_{interval}min"
+                                all_candles[key] = candles
 
     output_format = args.format
     if output_format == "both":
-        output_format = "json"  # Default for combined
+                output_format = "json"
 
-    # Export
     if output_format in ("json", "both"):
-        gen.export_json(os.path.join(args.output_dir, "users.json"), users)
+                gen.export_json(os.path.join(args.output_dir, "users.json"), users)
         gen.export_json(os.path.join(args.output_dir, "orders.json"), orders)
         gen.export_json(os.path.join(args.output_dir, "trades.json"), trades)
         gen.export_json(os.path.join(args.output_dir, "ticks.json"), all_ticks)
@@ -355,7 +338,7 @@ def main():
         gen.export_json(os.path.join(args.output_dir, "instruments.json"), gen.instruments)
 
     if output_format in ("csv", "both"):
-        gen.export_csv(os.path.join(args.output_dir, "users.csv"), users)
+                gen.export_csv(os.path.join(args.output_dir, "users.csv"), users)
         gen.export_csv(os.path.join(args.output_dir, "orders.csv"), orders)
         gen.export_csv(os.path.join(args.output_dir, "trades.csv"), trades)
 
@@ -363,4 +346,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+        main()
