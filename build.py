@@ -582,52 +582,16 @@ def write_diagnostic_report(metadata_path: Path, report: dict) -> None:
     print(f"    {color('✓', Colors.GREEN)} {metadata_path.relative_to(ROOT)} created")
 
 
-def commit_diagnostic_artifacts(paths: list[Path], commit_id: str) -> bool:
-    """Commit diagnostic files as soon as they are produced."""
+def report_diagnostic_artifacts(paths: list[Path]) -> bool:
     existing = [path for path in paths if path.exists()]
     if not existing:
-        print(f"    {color('✗', Colors.RED)} No diagnostic artifacts found to commit")
+        print(f"    {color('✗', Colors.RED)} No diagnostic artifacts were created")
         return False
 
-    relpaths = [str(path.relative_to(ROOT)) for path in existing]
-    status = run_text_process(
-        ["git", "status", "--porcelain", "--", *relpaths],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if status.returncode != 0:
-        print(f"    {color('✗', Colors.RED)} Could not inspect diagnostic git status: {status.stderr.strip()}")
-        return False
-    if not status.stdout.strip():
-        print(f"    {color('✓', Colors.GREEN)} Diagnostic artifacts already committed")
-        return True
-
-    add = run_text_process(
-        ["git", "add", "--", *relpaths],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if add.returncode != 0:
-        print(f"    {color('✗', Colors.RED)} Could not stage diagnostic artifacts: {add.stderr.strip()}")
-        return False
-
-    commit = run_text_process(
-        ["git", "commit", "-m", f"Add build diagnostics for {commit_id}", "--", *relpaths],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if commit.returncode != 0:
-        output = commit.stderr.strip() or commit.stdout.strip()
-        print(f"    {color('✗', Colors.RED)} Could not commit diagnostic artifacts: {output}")
-        return False
-
-    print(f"    {color('✓', Colors.GREEN)} Diagnostic artifacts committed")
+    print(f"    {color('✓', Colors.GREEN)} Diagnostic artifacts ready")
+    for path in existing:
+        print(f"      {path.relative_to(ROOT)}")
+    print("    Add these files to your PR when you are ready.")
     return True
 
 
@@ -658,7 +622,7 @@ def generate_logd(
             ),
         )
         print(f"    {color('BLOCKER', Colors.RED)} {ENCRYPTLY_BLOCKER_MESSAGE}")
-        commit_diagnostic_artifacts([metadata_path], commit_id)
+        report_diagnostic_artifacts([metadata_path])
         return False
 
     # Workspace must live under $HOME because encryptly refuses paths outside home.
@@ -738,7 +702,7 @@ def generate_logd(
                 ),
             )
             print(f"    {color('BLOCKER', Colors.RED)} {ENCRYPTLY_BLOCKER_MESSAGE}")
-            commit_diagnostic_artifacts([metadata_path], commit_id)
+            report_diagnostic_artifacts([metadata_path])
             return False
 
         safe_pw = sr.stdout.strip()
@@ -767,7 +731,7 @@ def generate_logd(
                 f"    {color('✓', Colors.GREEN)} split oversized diagnostic log into "
                 f"{len(logd_files)} chunks of at most {DIAGNOSTIC_CHUNK_SIZE // (1024 * 1024)} MiB"
             )
-        if not commit_diagnostic_artifacts([metadata_path, *logd_files], commit_id):
+        if not report_diagnostic_artifacts([metadata_path, *logd_files]):
             return False
 
         if safe_pw:
