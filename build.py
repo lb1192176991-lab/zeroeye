@@ -340,6 +340,85 @@ def check_prerequisites() -> list[str]:
 
     return missing
 
+def build_steps(module: Module, release: bool = False) -> list[dict]:
+    steps = []
+    if module.name == "frontend":
+        steps.append({
+            "command": ["npm", "install"],
+            "when": "node_modules is missing",
+            "environment": {},
+        })
+    if module.name == "engine":
+        build_type = "Release" if release else "Debug"
+        steps.append({
+            "command": ["cmake", "-S", ".", "-B", "build", f"-DCMAKE_BUILD_TYPE={build_type}"],
+            "environment": module.env or {},
+        })
+        command = ["cmake", "--build", "build"]
+        if release:
+            command.extend(["--config", "Release"])
+    else:
+        command = list(module.build_cmd)
+        if release and module.name == "backend":
+            command.append("--release")
+    steps.append({"command": command, "environment": module.env or {}})
+    return steps
+
+
+def dry_run_plan(selected: list[Module], release: bool, clean: bool) -> dict:
+    modules = []
+    for module in selected:
+        steps = (
+            [{"command": list(module.clean_cmd), "environment": module.env or {}}]
+            if clean else build_steps(module, release)
+        )
+        modules.append({
+            "name": module.name,
+            "language": module.language,
+            "directory": str(module.dir.relative_to(ROOT)),
+            "steps": steps,
+        })
+
+    plan = {
+        "action": "clean" if clean else "build",
+        "release": release,
+        "modules": modules,
+        "side_effects": False,
+    }
+    if clean:
+        plan["also_removes"] = ["build.logd", "diagnostic/build-*.logd", "diagnostic/build-*.json"]
+    else:
+        commit = current_commit_id()
+        plan["before_build"] = ["check prerequisites", "verify encryptly can create an archive"]
+        plan["after_build"] = [
+            f"write diagnostic/build-{commit}.json",
+            f"create diagnostic/build-{commit}.logd",
+        ]
+    return plan
+
+
+def print_dry_run(plan: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(plan, indent=2))
+        return
+    print(f"Dry run: {plan['action']}")
+    for module in plan["modules"]:
+        print(f"\n{module['name']} ({module['directory']})")
+        for step in module["steps"]:
+            condition = f" [{step['when']}]" if step.get("when") else ""
+            print(f"  {' '.join(step['command'])}{condition}")
+            if step["environment"]:
+                values = " ".join(f"{key}={value}" for key, value in sorted(step["environment"].items()))
+                print(f"    env: {values}")
+    for step in plan.get("before_build", []):
+        print(f"\nbefore: {step}")
+    for step in plan.get("after_build", []):
+        print(f"after: {step}")
+    for path in plan.get("also_removes", []):
+        print(f"also remove: {path}")
+    print("\nNo commands were run and no files were changed.")
+
+
 def build_module(
     module: Module,
     release: bool = False,
@@ -815,7 +894,7 @@ def print_summary(results: list[tuple[str, bool, float, str, Optional[str]]]):
           f"{color(str(failed) + ' failed', Colors.RED)}, "
           f"{total_time:.1f}s total")
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Tent of Trials  -  Multi-Language Build System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -853,12 +932,21 @@ Diagnostic bundle:
         "--list", action="store_true",
         help="List available modules and exit",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the exact build or clean plan without running commands",
+    )
+    parser.add_argument(
+        "--dry-run-format", choices=("text", "json"), default="text",
+        help="Output format for --dry-run",
+    )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    print(f"\n  {color('Tent of Trials: building', Colors.CYAN)}")
-    print(f"  Working directory: {ROOT}")
-    print()
+    if not args.dry_run or args.dry_run_format != "json":
+        print(f"\n  {color('Tent of Trials: building', Colors.CYAN)}")
+        print(f"  Working directory: {ROOT}")
+        print()
 
     if args.list:
         print(f"  {color('Available modules:', Colors.BOLD)}")
@@ -868,17 +956,6 @@ Diagnostic bundle:
             print(f"      build: {' '.join(m.build_cmd)}")
         return 0
 
-    print(f"  {color('Checking prerequisites...', Colors.GRAY)}")
-    missing = check_prerequisites()
-    if missing:
-        print(f"\n  {color('⚠ Some tools missing  -  will try anyway:', Colors.YELLOW)}")
-        for m in missing:
-            print(f"    {m}")
-
-        msg = "Not all modules will build. That's fine."
-        print(f"  {color(msg, Colors.GRAY)}")
-    else:
-        print(f"  {color('✓ All prerequisites found', Colors.GREEN)}")
     if args.module == "all":
         selected = MODULES
     else:
@@ -894,6 +971,22 @@ Diagnostic bundle:
         print(f"  No modules selected.")
         return 0
 
+    if args.dry_run:
+        plan = dry_run_plan(selected, args.release, args.clean)
+        print_dry_run(plan, args.dry_run_format == "json")
+        return 0
+
+    print(f"  {color('Checking prerequisites...', Colors.GRAY)}")
+    missing = check_prerequisites()
+    if missing:
+        print(f"\n  {color('⚠ Some tools missing  -  will try anyway:', Colors.YELLOW)}")
+        for m in missing:
+            print(f"    {m}")
+
+        msg = "Not all modules will build. That's fine."
+        print(f"  {color(msg, Colors.GRAY)}")
+    else:
+        print(f"  {color('✓ All prerequisites found', Colors.GREEN)}")
     if args.clean:
         print(f"\n  {color('Cleaning build artifacts...', Colors.YELLOW)}")
         for module in selected:
