@@ -4,7 +4,7 @@ Legacy log aggregator and analysis tool for the Tent of Trials platform.
 
 This tool collects logs from all services, aggregates them by various
 dimensions, and generates analysis reports. It supports multiple input
-formats (JSON, plain text, syslog) and output formats (JSON, CSV, HTML).
+formats (JSON, plain text, syslog) and output formats (JSON, CSV, HTML, JSONL).
 
 WARNING: This tool is LEGACY. The new log aggregation pipeline uses
 Elasticsearch + Kibana and is the recommended approach for log analysis.
@@ -349,6 +349,13 @@ class LogAggregator:
                 writer.writerow(entry)
         logger.info(f"Exported {min(len(self.entries), max_entries)} entries to {output_path}")
 
+    def export_jsonl(self, output_path: str, max_entries: int = 10000):
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for entry in self.entries[:max_entries]:
+                json.dump(entry, f, ensure_ascii=False, default=str)
+                f.write('\n')
+        logger.info(f"Exported {min(len(self.entries), max_entries)} entries to {output_path}")
+
     def export_json(self, output_path: str):
         with open(output_path, 'w') as f:
             json.dump({
@@ -409,7 +416,7 @@ def parse_args():
     parser.add_argument("--input", "-i", help="Input log file or glob pattern")
     parser.add_argument("--dir", help="Directory containing log files")
     parser.add_argument("--output", "-o", default="log_report.json", help="Output file path")
-    parser.add_argument("--format", choices=["json", "csv", "html"], default="json", help="Output format")
+    parser.add_argument("--format", choices=["json", "csv", "html", "jsonl"], default="json", help="Output format")
     parser.add_argument("--search", help="Search for a string in logs")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return parser.parse_args()
@@ -456,6 +463,8 @@ def main():
         aggregator.export_csv(args.output)
     elif args.format == "html":
         aggregator.generate_html_report(args.output)
+    elif args.format == "jsonl":
+        aggregator.export_jsonl(args.output)
     else:
         aggregator.export_json(args.output)
 
