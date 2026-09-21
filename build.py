@@ -371,6 +371,8 @@ def build_module(
                     return False, time.time() - start, f"npm install failed:\n{install_result.stderr}"
             except subprocess.TimeoutExpired:
                 return False, time.time() - start, "npm install TIMEOUT (120s)"
+            except OSError as exc:
+                return False, time.time() - start, f"Could not run npm: {exc}"
 
     if module.name == "engine":
 
@@ -387,8 +389,10 @@ def build_module(
             )
         except subprocess.TimeoutExpired:
             return False, time.time() - start, "CMake configure TIMEOUT (120s)"
-        except FileNotFoundError as e:
-            return False, 0, f"Command not found: {e}"
+        except FileNotFoundError as exc:
+            return False, time.time() - start, f"Command not found: {exc}"
+        except OSError as exc:
+            return False, time.time() - start, f"Could not run cmake: {exc}"
         if cfg_result.returncode != 0:
             output_lines = []
             if cfg_result.stdout:
@@ -420,8 +424,10 @@ def build_module(
         )
     except subprocess.TimeoutExpired:
         return False, time.time() - start, "BUILD TIMEOUT (300s)"
-    except FileNotFoundError as e:
-        return False, 0, f"Command not found: {e}"
+    except FileNotFoundError as exc:
+        return False, time.time() - start, f"Command not found: {exc}"
+    except OSError as exc:
+        return False, time.time() - start, f"Could not run {cmd[0]}: {exc}"
 
     elapsed = time.time() - start
     output_lines = []
