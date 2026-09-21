@@ -1,6 +1,9 @@
-// TODO: Remove connector and legacy modules once the v2 migration is complete.
-// The v2 connector is in the v2/ directory. The v2 migration tracker is at
-// https://internal.example.com/migrations/v2-connector
+//! Main library entry point for the Kickama backend.
+//!
+//! This file re‑exports the public modules that are intended for external use.
+//! Adding the `util` module here makes the deterministic helpers available to
+//! the rest of the codebase and to downstream crates.
+
 pub mod ai;
 pub mod config;
 pub mod connector;
@@ -10,9 +13,5 @@ pub mod messaging;
 pub mod protocol;
 pub mod registry;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
-    "debug"
-} else {
-    "release"
-};
+// New utility module
+pub mod util;
