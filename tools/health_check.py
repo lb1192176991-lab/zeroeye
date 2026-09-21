@@ -64,6 +64,11 @@ DISK_THRESHOLD_CRITICAL = 90
 MEMORY_THRESHOLD_WARNING = 80
 MEMORY_THRESHOLD_CRITICAL = 90
 
+KAFKA_LAG_WARNING = 1000
+KAFKA_LAG_CRITICAL = 10000
+KAFKA_CONSUMER_GROUP = os.environ.get("KAFKA_GROUP_ID", "tent-consumers")
+KAFKA_CONSUMER_GROUPS_CMD = os.environ.get("KAFKA_CONSUMER_GROUPS_CMD", "kafka-consumer-groups.sh")
+
 # ---------------------------------------------------------------------------
 # CHECK FUNCTIONS
 # ---------------------------------------------------------------------------
@@ -129,6 +134,54 @@ def check_certificate_expiry(host: str, port: int = 443) -> Tuple[str, str, int]
                     return "CRITICAL", f"Certificate expires in {days_left} days", days_left
     except Exception as e:
         return "WARNING", f"Cannot check: {e}", 0
+
+
+def parse_consumer_lag(output: str) -> Tuple[int, int]:
+    total = 0
+    partitions = 0
+    for line in output.splitlines():
+        fields = line.split()
+        if not fields or fields[0].upper() == "GROUP" or len(fields) < 6:
+            continue
+        try:
+            lag = int(fields[5])
+        except ValueError:
+            continue
+        total += max(lag, 0)
+        partitions += 1
+    if partitions == 0:
+        raise ValueError("no consumer lag rows returned")
+    return total, partitions
+
+
+def check_kafka_consumer_lag(host: str, port: int, group: str) -> Tuple[str, str, int]:
+    command = [
+        KAFKA_CONSUMER_GROUPS_CMD,
+        "--bootstrap-server", f"{host}:{port}",
+        "--group", group,
+        "--describe",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return "WARNING", f"{KAFKA_CONSUMER_GROUPS_CMD} not found", 0
+    except subprocess.TimeoutExpired:
+        return "WARNING", "Consumer lag check timed out", 0
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "consumer lag command failed"
+        return "WARNING", detail, 0
+    try:
+        lag, partitions = parse_consumer_lag(result.stdout)
+    except ValueError as error:
+        return "WARNING", str(error), 0
+
+    detail = f"{lag} messages across {partitions} partitions"
+    if lag >= KAFKA_LAG_CRITICAL:
+        return "CRITICAL", detail, lag
+    if lag >= KAFKA_LAG_WARNING:
+        return "WARNING", detail, lag
+    return "OK", detail, lag
 
 
 def check_disk_usage(path: str = "/") -> Tuple[str, str, float]:
@@ -239,6 +292,20 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
             "endpoint": f"{config['host']}:{config['port']}",
         }
         if status == "CRITICAL":
+            all_ok = False
+
+    if not service or service == "kafka":
+        kafka = INFRASTRUCTURE["kafka"]
+        lag_status, lag_detail, lag = check_kafka_consumer_lag(
+            kafka["host"], kafka["port"], KAFKA_CONSUMER_GROUP
+        )
+        results["infrastructure"]["kafka"]["consumer_lag"] = {
+            "status": lag_status,
+            "detail": lag_detail,
+            "messages": lag,
+            "group": KAFKA_CONSUMER_GROUP,
+        }
+        if lag_status == "CRITICAL":
             all_ok = False
 
     # Check system resources
