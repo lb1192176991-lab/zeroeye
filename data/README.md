@@ -30,6 +30,29 @@ WARNING: The seed data includes test API keys and passwords that are publicly
 visible in this repository. Do NOT use these credentials in production.
 The seed data is intended for local development only.
 
+### Generated Test Data
+
+The standalone generator uses only the Python standard library:
+
+```bash
+python3 tools/data_generator.py --seed 42 --format json --output-dir ./test_data
+python3 tools/data_generator.py --seed 42 --format csv --output-dir ./test_data_csv
+```
+
+For a given Python version, seed, record counts, output format, and sequence of
+generation calls, generated data is reproducible. All generated random fields
+use the generator's private RNG, so other generators and calls to the global
+`random` module do not affect the output. The default seed remains `42`.
+Tick and candle timestamps use `2024-01-01T00:00:00Z` as their fixed reference;
+the last record is one interval before that time, rather than relative to the
+current clock. A different seed changes the sample data but keeps this timeline.
+
+Run the regression tests from the repository root:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 ## Migration Files
 
 Migration files follow the naming convention: `{YYYYMMDDHHMMSS}_{description}.sql`
