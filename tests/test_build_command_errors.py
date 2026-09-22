@@ -57,6 +57,17 @@ class BuildCommandErrorTests(unittest.TestCase):
         self.assertFalse(success)
         self.assertEqual(output, "stdout text\nstderr text")
 
+    @patch.object(build, "run_text_process", side_effect=FileNotFoundError(2, "No such file", "npm"))
+    def test_missing_npm_keeps_specific_message(self, run):
+        module = self.module("frontend")
+        module.dir = ROOT / "frontend"
+
+        with patch.object(Path, "exists", return_value=False):
+            success, _, output = build.build_module(module)
+
+        self.assertFalse(success)
+        self.assertIn("Command not found", output)
+
     @patch.object(build, "run_text_process", side_effect=PermissionError(13, "Permission denied", "npm"))
     def test_frontend_install_permission_error_is_reported(self, run):
         module = self.module("frontend")
