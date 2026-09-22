@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-09-22T11:01:57.934978+00:00",
+  "commit": "0dca4733",
+  "diagnostic_logd": "diagnostic/build-0dca4733.logd",
+  "diagnostic_logd_error": null,
+  "message_blocker": null,
+  "chunked": false,
+  "chunk_size_bytes": null,
+  "password": "f60d93bb4d902ec70b19",
+  "decrypt_command": "encryptly unpack diagnostic/build-0dca4733.logd <outdir> --password f60d93bb4d902ec70b19",
+  "total_modules": 1,
+  "passed": 1,
+  "failed": 0,
+  "modules": [
+    {
+      "name": "market",
+      "status": "PASS",
+      "elapsed_seconds": 0.518,
+      "artifact": "/home/sandbox/zeroeye/market/market",
+      "output": ""
+    }
+  ],
+  "pr_note": "Include the encrypted diagnostic logd artifact(s): diagnostic/build-0dca4733.logd. The encrypted .logd is the required diagnostic content for PR review; this JSON file is metadata. Maintainers may ask you to remove these diagnostic artifacts before merging."
+}
