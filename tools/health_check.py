@@ -355,15 +355,15 @@ def print_health_report(results: Dict[str, Any]):
         if items:
             print(f"\n  {category}:")
             for name, check in items.items():
-                if isinstance(check, dict) and "status" in check:
+                if not isinstance(check, dict):
+                    continue
+                if "status" in check:
                     status_icon = {"OK": "✓", "WARNING": "⚠", "CRITICAL": "✗"}.get(check["status"], "?")
                     print(f"    {status_icon} {name}: {check['detail']}")
-                else:
-                    print(f"    {name}:")
-                    for sub_name, sub_check in check.items():
-                        if isinstance(sub_check, dict) and "status" in sub_check:
-                            sub_icon = {"OK": "✓", "WARNING": "⚠", "CRITICAL": "✗"}.get(sub_check["status"], "?")
-                            print(f"      {sub_icon} {sub_name}: {sub_check['detail']}")
+                for sub_name, sub_check in check.items():
+                    if isinstance(sub_check, dict) and "status" in sub_check:
+                        sub_icon = {"OK": "✓", "WARNING": "⚠", "CRITICAL": "✗"}.get(sub_check["status"], "?")
+                        print(f"      {sub_icon} {sub_name}: {sub_check['detail']}")
     print()
 
 
