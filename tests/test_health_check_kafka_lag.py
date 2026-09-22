@@ -1,3 +1,4 @@
+import io
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
@@ -68,6 +69,31 @@ class KafkaLagTests(unittest.TestCase):
         self.assertEqual(lag["messages"], 12000)
         self.assertEqual(lag["group"], "tent-consumers")
         self.assertEqual(result["overall_status"], "DEGRADED")
+
+    def test_text_report_includes_consumer_lag(self):
+        results = {
+            "hostname": "host",
+            "timestamp": "now",
+            "overall_status": "DEGRADED",
+            "services": {},
+            "infrastructure": {
+                "kafka": {
+                    "status": "OK",
+                    "detail": "Connected",
+                    "consumer_lag": {
+                        "status": "CRITICAL",
+                        "detail": "12000 messages across 2 partitions",
+                    },
+                },
+            },
+            "system": {},
+            "certificates": {},
+        }
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            health_check.print_health_report(results)
+        report = stdout.getvalue()
+        self.assertIn("kafka: Connected", report)
+        self.assertIn("consumer_lag: 12000 messages across 2 partitions", report)
 
 
 if __name__ == "__main__":
