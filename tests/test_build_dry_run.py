@@ -71,7 +71,7 @@ class BuildDryRunTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("npm install [node_modules is missing]", output)
         self.assertIn("NODE_ENV=production", output)
-        self.assertIn("No commands were run and no files were changed.", output)
+        self.assertIn("No build or clean commands were run, and no files were changed.", output)
 
 
 if __name__ == "__main__":
