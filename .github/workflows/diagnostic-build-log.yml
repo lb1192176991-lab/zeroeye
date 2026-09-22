@@ -108,7 +108,7 @@ jobs:
           if not diagnostic_json_paths:
               error(
                   "This PR must include a script-generated diagnostic/build-<commit>.json file. "
-                  "Rebase onto upstream/main, run `python3 build.py`, and push the commit it creates."
+                  "Rebase onto upstream/main, run `python3 build.py`, commit the generated bundle, and push your branch."
               )
               sys.exit(1)
 
@@ -230,7 +230,7 @@ jobs:
                   error(message, file=file)
               error(
                   "No valid script-generated diagnostic bundle found. "
-                  "Fix: `git fetch upstream && git rebase upstream/main && python3 build.py && git push --force-with-lease`."
+                  "Fix: rebase onto upstream/main, run `python3 build.py`, commit the generated bundle, and push your branch."
               )
               sys.exit(1)
 
