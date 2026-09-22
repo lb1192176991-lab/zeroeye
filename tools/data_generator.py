@@ -23,7 +23,6 @@ import math
 import os
 import random
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,6 +57,7 @@ ORDER_SIDES = ["buy", "sell"]
 ORDER_TYPES = ["market", "limit", "stop", "stop_limit"]
 ORDER_STATUSES = ["new", "filled", "partially_filled", "cancelled", "rejected", "expired"]
 TIME_IN_FORCE = ["gtc", "ioc", "fok", "day"]
+BASE_TIMESTAMP_MS = 1704067200000  # 2024-01-01T00:00:00Z
 
 FIRST_NAMES = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Hank",
                "Ivy", "Jack", "Kate", "Leo", "Mia", "Noah", "Olivia", "Paul",
@@ -76,8 +76,9 @@ DOMAINS = ["example.com", "test.org", "demo.net", "sample.io", "mock.dev",
            "fictitious.co", "imaginary.app", "pretend.tech", "dummy.biz",
            "simulated.com", "testmail.com", "inbox.test"]
 
-def gaussian_random(mean: float, stddev: float) -> float:
-    return random.gauss(mean, stddev)
+def gaussian_random(mean: float, stddev: float,
+                    rng: Optional[random.Random] = None) -> float:
+    return (rng or random).gauss(mean, stddev)
 
 def clamp(value: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(max_val, value))
@@ -85,25 +86,30 @@ def clamp(value: float, min_val: float, max_val: float) -> float:
 def round_to_tick(value: float, tick_size: float) -> float:
     return round(value / tick_size) * tick_size
 
-def random_phone() -> str:
-    return f"+1-{random.randint(200, 999)}-{random.randint(100, 999)}-{random.randint(1000, 9999)}"
+def random_phone(rng: Optional[random.Random] = None) -> str:
+    source = rng or random
+    return f"+1-{source.randint(200, 999)}-{source.randint(100, 999)}-{source.randint(1000, 9999)}"
 
-def random_email(first: str, last: str) -> str:
-    domain = random.choice(DOMAINS)
-    pattern = random.choice([
+def random_email(first: str, last: str,
+                 rng: Optional[random.Random] = None) -> str:
+    source = rng or random
+    domain = source.choice(DOMAINS)
+    pattern = source.choice([
         f"{first.lower()}.{last.lower()}",
         f"{first.lower()}{last.lower()}",
         f"{first[0].lower()}{last.lower()}",
         f"{last.lower()}.{first.lower()}",
-        f"{first.lower()}{random.randint(1, 999)}",
+        f"{first.lower()}{source.randint(1, 999)}",
     ])
     return f"{pattern}@{domain}"
 
-def random_datetime(start_year: int = 2023, end_year: int = 2024) -> datetime:
+def random_datetime(start_year: int = 2023, end_year: int = 2024,
+                    rng: Optional[random.Random] = None) -> datetime:
+    source = rng or random
     start = datetime(start_year, 1, 1, tzinfo=timezone.utc)
     end = datetime(end_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     delta = end - start
-    return start + timedelta(seconds=random.randint(0, int(delta.total_seconds())))
+    return start + timedelta(seconds=source.randint(0, int(delta.total_seconds())))
 
 
 class DataGenerator:
@@ -126,16 +132,16 @@ class DataGenerator:
             last = self.random.choice(LAST_NAMES)
             user = {
                 "id": f"user_{self.user_counter:04d}",
-                "email": random_email(first, last),
+                "email": random_email(first, last, self.random),
                 "name": f"{first} {last}",
                 "role": self.random.choice(["trader", "trader", "trader", "admin",
                                             "analyst", "viewer"]),
                 "status": self.random.choice(["active", "active", "active", "active", "inactive"]),
                 "mfa_enabled": self.random.random() < 0.3,
                 "email_verified": self.random.random() < 0.95,
-                "created_at": random_datetime().isoformat(),
-                "last_login": random_datetime(2024, 2024).isoformat(),
-                "phone": random_phone(),
+                "created_at": random_datetime(rng=self.random).isoformat(),
+                "last_login": random_datetime(2024, 2024, self.random).isoformat(),
+                "phone": random_phone(self.random),
                 "preferences": {
                     "theme": self.random.choice(["dark", "light"]),
                     "language": "en",
@@ -180,8 +186,8 @@ class DataGenerator:
                 "status": self.random.choice(ORDER_STATUSES),
                 "filled_quantity": 0,
                 "avg_fill_price": None,
-                "created_at": random_datetime().isoformat(),
-                "updated_at": random_datetime(2024, 2024).isoformat(),
+                "created_at": random_datetime(rng=self.random).isoformat(),
+                "updated_at": random_datetime(2024, 2024, self.random).isoformat(),
             }
             self.orders.append(order)
 
@@ -210,7 +216,7 @@ class DataGenerator:
                 "quantity": quantity,
                 "total": round(price * quantity, 2),
                 "side": side,
-                "timestamp": random_datetime(2024, 2024).isoformat(),
+                "timestamp": random_datetime(2024, 2024, self.random).isoformat(),
                 "buyer": self.random.choice(self.users)["id"],
                 "seller": self.random.choice(self.users)["id"],
                 "buyer_fee": round(price * quantity * 0.001, 2),
@@ -239,7 +245,7 @@ class DataGenerator:
                 "ask": round_to_tick(price + instrument["tick_size"] * self.random.randint(1, 5),
                                     instrument["tick_size"]),
                 "volume": round(self.random.expovariate(1.0 / instrument["vol"]), 4),
-                "timestamp": int(time.time() * 1000) - (count - i) * 1000,
+                "timestamp": BASE_TIMESTAMP_MS - (count - i) * 1000,
             }
             ticks.append(tick)
 
@@ -251,7 +257,7 @@ class DataGenerator:
         instrument = next(i for i in self.instruments if i["symbol"] == instrument_symbol)
         candles = []
         price = instrument["price"]
-        now = int(time.time() * 1000)
+        now = BASE_TIMESTAMP_MS
         interval_ms = interval_minutes * 60 * 1000
 
         for i in range(count):
