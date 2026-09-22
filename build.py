@@ -416,7 +416,7 @@ def print_dry_run(plan: dict, as_json: bool) -> None:
         print(f"after: {step}")
     for path in plan.get("also_removes", []):
         print(f"also remove: {path}")
-    print("\nNo commands were run and no files were changed.")
+    print("\nNo build or clean commands were run, and no files were changed.")
 
 
 def build_module(
