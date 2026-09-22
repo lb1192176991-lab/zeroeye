@@ -371,6 +371,8 @@ def build_module(
                     return False, time.time() - start, f"npm install failed:\n{install_result.stderr}"
             except subprocess.TimeoutExpired:
                 return False, time.time() - start, "npm install TIMEOUT (120s)"
+            except FileNotFoundError as exc:
+                return False, time.time() - start, f"Command not found: {exc}"
             except OSError as exc:
                 return False, time.time() - start, f"Could not run npm: {exc}"
 
