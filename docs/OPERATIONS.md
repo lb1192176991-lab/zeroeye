@@ -26,6 +26,42 @@ Each service exposes a health check endpoint:
 | Frailbox Runtime | `/health` | 8082 |
 | Frontend | `/` | 3000 |
 
+### Dry Run Mode
+
+The market engine supports a dry-run mode that simulates trading activity without executing real transactions. This is useful for testing trading strategies and algorithms without risk.
+
+#### Enabling Dry Run Mode
+
+For the market service:
+```bash
+go run main.go --dry-run=true
+```
+
+For the backend service, set the `dry_run` configuration option to `true` in the configuration file.
+
+#### Dry Run Behavior
+
+When in dry-run mode:
+- All trading operations are simulated
+- No real orders are placed
+- No real trades are executed
+- Market data is still processed and returned
+- All order book operations are simulated
+- Trade confirmations are returned with simulated execution details
+
+#### Checking Dry Run Status
+
+The health check endpoint for the market engine includes dry-run status:
+```json
+{
+  "status": "ok",
+  "version": "3.2.0",
+  "uptime_seconds": 86400,
+  "timestamp": "2024-01-15T00:00:00Z",
+  "dry_run": true
+}
+```
+
 The health check returns a 200 OK response with a JSON body:
 
 ```json
