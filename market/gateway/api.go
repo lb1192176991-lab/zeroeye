@@ -212,6 +212,7 @@ type Gateway struct {
 	mu        sync.RWMutex
 	routes    []Route
 	middleware []MiddlewareFunc
+	dryRun    bool
 }
 
 type Route struct {
@@ -244,16 +245,17 @@ type GatewayMetrics struct {
 	mu                 sync.Mutex
 }
 
-func NewGateway(config GatewayConfig) *Gateway {
+func NewGateway(config GatewayConfig, dryRun bool) *Gateway {
 	g := &Gateway{
 		config:      config,
 		mux:         http.NewServeMux(),
 		rateLimiter: NewRateLimiter(config.RateLimitPerSecond, config.RateLimitBurst),
-		wsManager:   NewWSConnectionManager(config),
+		wsManager:   NewWSConnectionManager(config, dryRun),
 		metrics:     &GatewayMetrics{},
 		logger:      log.New(os.Stdout, "[gateway] ", log.LstdFlags),
 		startedAt:   time.Now(),
 		health:      atomic.Value{},
+		dryRun:      dryRun,
 	}
 	g.health.Store(true)
 	g.registerDefaultRoutes()

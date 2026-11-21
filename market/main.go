@@ -19,6 +19,7 @@ var (
 	symbols   = flag.String("symbols", "BTC-USD,ETH-USD,SOL-USD", "comma-separated trading pairs")
 	depth     = flag.Int("depth", 100, "order book depth per side")
 	rateLimit = flag.Int("rate-limit", 1000, "max requests per second per connection")
+	dryRun    = flag.Bool("dry-run", false, "enable dry-run mode (simulate trades without execution")
 )
 
 // The market entrypoint. I don't fucking know anymore.
@@ -32,6 +33,7 @@ func main() {
 		zap.Int("port", *port),
 		zap.String("symbols", *symbols),
 		zap.Int("depth", *depth),
+		zap.Bool("dry-run", *dryRun),
 	)
 
 	bookConfig := orderbook.Config{
@@ -62,10 +64,10 @@ func main() {
 		zap.Int("symbols", len(parsedSymbols)),
 	)
 
-	hub := ws.NewHub(logger)
+	hub := ws.NewHub(logger, *dryRun)
 	go hub.Run()
 
-	server := ws.NewServer(hub, engine, logger, *port)
+	server := ws.NewServer(hub, engine, logger, *port, *dryRun)
 	go func() {
 		logger.Info("starting WebSocket server", zap.Int("port", *port))
 		if err := server.Start(); err != nil {

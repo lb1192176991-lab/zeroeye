@@ -48,6 +48,7 @@ pub struct RootConfig {
     pub registry: RegistryConfig,
     pub discovery: DiscoveryConfig,
     pub messaging: MessagingConfig,
+    pub dry_run: bool,
 }
 
 impl Default for RootConfig {
@@ -85,6 +86,7 @@ impl Default for RootConfig {
                 batch_size: 500,
                 compression: "snappy".into(),
             },
+            dry_run: false,
         }
     }
 }
