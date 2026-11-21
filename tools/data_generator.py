@@ -85,12 +85,42 @@ def clamp(value: float, min_val: float, max_val: float) -> float:
 def round_to_tick(value: float, tick_size: float) -> float:
     return round(value / tick_size) * tick_size
 
-def random_phone() -> str:
-    return f"+1-{random.randint(200, 999)}-{random.randint(100, 999)}-{random.randint(1000, 9999)}"
+def random_phone(seed: Optional[int] = None) -> str:
+    """Generate a random phone number with optional seeding.
+    
+    Args:
+        seed: Optional seed for deterministic generation.
+              If None, uses the global random module.
+    
+    Returns:
+        A randomly generated phone number in US format.
+    """
+    if seed is not None:
+        rng = random.Random(seed)
+    else:
+        rng = random
+        
+    return f"+1-{rng.randint(200, 999)}-{rng.randint(100, 999)}-{rng.randint(1000, 9999)}"
 
-def random_email(first: str, last: str) -> str:
-    domain = random.choice(DOMAINS)
-    pattern = random.choice([
+def random_email(first: str, last: str, seed: Optional[int] = None) -> str:
+    """Generate a random email address with optional seeding.
+    
+    Args:
+        first: First name for email generation.
+        last: Last name for email generation.
+        seed: Optional seed for deterministic generation.
+              If None, uses the global random module.
+    
+    Returns:
+        A randomly generated email address.
+    """
+    if seed is not None:
+        rng = random.Random(seed)
+    else:
+        rng = random
+        
+    domain = rng.choice(DOMAINS)
+    pattern = rng.choice([
         f"{first.lower()}.{last.lower()}",
         f"{first.lower()}{last.lower()}",
         f"{first[0].lower()}{last.lower()}",
@@ -99,15 +129,38 @@ def random_email(first: str, last: str) -> str:
     ])
     return f"{pattern}@{domain}"
 
-def random_datetime(start_year: int = 2023, end_year: int = 2024) -> datetime:
+def random_datetime(start_year: int = 2023, end_year: int = 2024, seed: Optional[int] = None) -> datetime:
+    """Generate a random datetime with optional seeding.
+    
+    Args:
+        start_year: Start year for the datetime range.
+        end_year: End year for the datetime range.
+        seed: Optional seed for deterministic generation.
+              If None, uses the global random module.
+    
+    Returns:
+        A randomly generated datetime within the specified range.
+    """
+    if seed is not None:
+        rng = random.Random(seed)
+    else:
+        rng = random
+        
     start = datetime(start_year, 1, 1, tzinfo=timezone.utc)
     end = datetime(end_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     delta = end - start
-    return start + timedelta(seconds=random.randint(0, int(delta.total_seconds())))
+    return start + timedelta(seconds=rng.randint(0, int(delta.total_seconds())))
 
 
 class DataGenerator:
     def __init__(self, seed: int = 42):
+        """Initialize data generator with deterministic seed.
+        
+        Args:
+            seed: Random seed for reproducible data generation.
+                  Use the same seed to generate identical datasets.
+        """
+        self.seed = seed
         self.random = random.Random(seed)
         self.instruments = INSTRUMENTS
         self.users: List[Dict[str, Any]] = []
@@ -117,6 +170,9 @@ class DataGenerator:
         self.user_counter = 0
         self.order_counter = 0
         self.trade_counter = 0
+        
+        # Initialize with fixed seed for reproducibility
+        self._initialize_seed()
 
     def generate_users(self, count: int = 50) -> List[Dict[str, Any]]:
         self.users = []
@@ -187,6 +243,31 @@ class DataGenerator:
 
         return self.orders
 
+    def _initialize_seed(self):
+        """Initialize the generator with a deterministic seed.
+        
+        This method ensures that all random operations are reproducible
+        by seeding the random number generator with the configured seed value.
+        """
+        self.random.seed(self.seed)
+        
+    def set_seed(self, seed: int):
+        """Update the generator seed and reinitialize.
+        
+        Args:
+            seed: New random seed for reproducible data generation.
+        """
+        self.seed = seed
+        self._initialize_seed()
+        
+    def get_seed(self) -> int:
+        """Get the current seed value.
+        
+        Returns:
+            The current seed used for deterministic generation.
+        """
+        return self.seed
+        
     def generate_trades(self, count: int = 500) -> List[Dict[str, Any]]:
         if not self.users:
             self.generate_users(20)
@@ -196,7 +277,10 @@ class DataGenerator:
             self.trade_counter += 1
             instrument = self.random.choice(self.instruments)
             side = self.random.choice(ORDER_SIDES)
-            price = instrument["price"] * (1 + self.random.uniform(-0.02, 0.02))
+            
+            # Use deterministic price movement based on seed
+            price_factor = 1 + (self.random.getrandbits(16) % 100 - 50) / 1000.0
+            price = instrument["price"] * price_factor02, 0.02))
             price = round_to_tick(price, instrument["tick_size"])
             quantity = round_to_tick(
                 self.random.expovariate(1.0 / instrument["vol"]),
