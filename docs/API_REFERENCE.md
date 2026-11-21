@@ -389,6 +389,82 @@ Send an authentication message after connecting:
 | Channel | Description | Update Frequency |
 |---------|-------------|-----------------|
 | `market.ticker` | Real-time ticker updates | 100ms |
+| `market.orderbook` | Real-time order book updates | 100ms |
+| `market.trades` | Real-time trade executions | 100ms |
+| `market.candles` | Historical candle data updates | 1s |
+
+## JSONL Output Format
+
+The API supports JSONL (JSON Lines) format for streaming data responses. JSONL is a text format where each line is a valid JSON object, making it ideal for streaming applications and large datasets.
+
+### Requesting JSONL Format
+
+Add the `format=jsonl` query parameter to any endpoint that supports streaming or large datasets:
+
+```
+GET /market/trades?symbol=BTC/USD&limit=1000&format=jsonl
+```
+
+### JSONL Response Example
+
+Instead of a single JSON array, the response will be a stream of JSON objects, one per line:
+
+```json
+{"symbol":"BTC/USD","id":"trade_12345","price":50000.00,"quantity":0.1,"side":"buy","timestamp":1704070800000}
+{"symbol":"BTC/USD","id":"trade_12346","price":49999.50,"quantity":0.05,"side":"sell","timestamp":1704070801000}
+{"symbol":"BTC/USD","id":"trade_12347","price":50000.50,"quantity":0.2,"side":"buy","timestamp":1704070802000}
+```
+
+### WebSocket JSONL Streaming
+
+For WebSocket connections, you can request JSONL format by including it in the subscription message:
+
+```json
+{
+  "type": "subscribe",
+  "channel": "market.trades",
+  "symbol": "BTC/USD",
+  "format": "jsonl"
+}
+```
+
+Each message received will be a separate JSON object on its own line.
+
+### Advantages of JSONL Format
+
+- **Memory efficient**: Processes one line at a time without loading entire dataset into memory
+- **Streamable**: Can be processed as it arrives, ideal for real-time applications
+- **Backwards compatible**: Easy to parse with existing JSON libraries
+- **Human readable**: Each line is a complete JSON object that can be examined individually
+
+### Consuming JSONL Data
+
+Example Python code to consume JSONL data:
+
+```python
+import json
+
+for line in response.iter_lines():
+    if line:
+        trade = json.loads(line)
+        print(f"Trade: {trade['symbol']} at {trade['price']}")
+```
+
+Example Node.js code:
+
+```javascript
+const readline = require('readline');
+
+const rl = readline.createInterface({
+  input: response,
+  crlfDelay: Infinity
+});
+
+rl.on('line', (line) => {
+  const trade = JSON.parse(line);
+  console.log(`Trade: ${trade.symbol} at ${trade.price}`);
+});
+```
 | `market.orderbook` | Order book snapshots | 100ms |
 | `market.trades` | Recent trades | Real-time |
 | `market.candles` | Candle updates (1m) | 1 minute |
