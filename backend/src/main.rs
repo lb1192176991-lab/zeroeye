@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use tent_backend::discovery::ServiceDiscovery;
 use tent_backend::messaging::MessageBroker;
 use tent_backend::registry::ServiceRegistry;
@@ -9,7 +11,6 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "tent-backend")]
 #[command(about = "Tent of Trials Backend - Distributed Microservices Framework", long_about = None)]
 struct Cli {
-
     #[arg(short, long, default_value = "node-0")]
     node_id: String,
 
@@ -21,6 +22,9 @@ struct Cli {
 
     #[arg(short, long, default_value = "/etc/tent/config.toml")]
     config: String,
+
+    #[arg(long)]
+    seed: Option<u64>,
 }
 
 #[tokio::main]
@@ -34,6 +38,11 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    if let Some(seed) = cli.seed {
+        let _rng = StdRng::seed_from_u64(seed);
+        tracing::info!(seed = seed, "initialized deterministic data seed");
+    }
 
     tracing::info!(
         node_id = %cli.node_id,
