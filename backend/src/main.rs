@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use rand::{SeedableRng, rngs::StdRng};
 use tent_backend::discovery::ServiceDiscovery;
 use tent_backend::messaging::MessageBroker;
 use tent_backend::registry::ServiceRegistry;
@@ -21,6 +22,9 @@ struct Cli {
 
     #[arg(short, long, default_value = "/etc/tent/config.toml")]
     config: String,
+
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
 }
 
 #[tokio::main]
@@ -35,12 +39,15 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let _rng = StdRng::seed_from_u64(cli.seed);
+
     tracing::info!(
         node_id = %cli.node_id,
         consensus = %cli.consensus,
         max_connections = %cli.max_connections,
         config = %cli.config,
-        "initializing tent backend orchestration framework"
+        seed = %cli.seed,
+        "initializing tent backend orchestration framework with deterministic seed"
     );
 
     let config = tent_backend::config::load_config(&cli.config).await?;
